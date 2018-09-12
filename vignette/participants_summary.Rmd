@@ -1,0 +1,39 @@
+---
+title: "Participants Summary"
+author: "William Hopper"
+date: "`r format(Sys.Date(), '%b %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(rprojroot)
+library(dplyr)
+library(tidyr)
+library(kableExtra)
+root_dir <- rprojroot::is_rstudio_project$find_file()
+source(file.path(root_dir, "R","load_data.R"))
+```
+
+```{r load_data}
+test <- load_data("Test")
+```
+
+```{r score}
+test <- mutate(test,
+               speeded_correct = (type == "T" & speeded_judgment == "o") |
+                                 (type == "L" & speeded_judgment == "n"),
+               delayed_correct = (type == "T" & delayed_judgment == "o") |
+                                 (type == "L" & delayed_judgment == "n")) %>%
+  select(subject, session, trial:strength, word, 
+         speeded_judgment, speeded_RT, speeded_correct,
+         delayed_judgment, delayed_RT, delayed_correct)
+```
+
+```{r n_per_sub_session}
+n_per_sub_session <- count(test, subject, session)
+```
+
