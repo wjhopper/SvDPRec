@@ -5,7 +5,7 @@ for (p in packages) {
     library(p, character.only = TRUE)
   }
 }
-rm(packages, loaded)
+rm(packages, loaded, p)
 
 
 load_data <- function(phase = c("Test","Slist","Points","Prac","TwoBack")) {

@@ -9,7 +9,7 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
 library(rprojroot)
 library(dplyr)
 library(tidyr)
@@ -57,33 +57,94 @@ percent_correct_per_sub_session <- filter(test, !is.na(type)) %>%
   gather(key = "judgment", value = "PC", speeded_correct, delayed_correct) %>%
   mutate(judgment = factor(sub("_correct", "", judgment, fixed = TRUE),
                            levels = c("speeded","delayed"),
-                           labels = c("Speeded", "Delayed"))
-         )
+                           labels = c("Speeded", "Delayed")),
+         session = factor(session))
 
 ```
 
-```{r accuracy_per_sub_session_display, fig.align="center"}
-ggplot(percent_correct_per_sub_session,
-       aes(x=factor(session), y=PC, group=subject)) +
+```{r accuracy_per_sub_session_display}
+PC_sub_session_plot <-
+  ggplot(percent_correct_per_sub_session,
+         aes(x=session, y=PC, group=subject)) +
   geom_point(size=1.5) +
   geom_line(size=.7) +
-  geom_text_repel(aes(label=subject),
-                  direction="y",
-                  data = filter(percent_correct_per_sub_session,
-                                session==4),
-                  nudge_x = 15, hjust=0,
-                  min.segment.length = 1,
-                  box.padding = .15,
-                  arrow = arrow(length = unit(0.02, "npc"),
-                                type = "open",
-                                ends = "last")
-                  ) +
   facet_wrap(judgment~.) +
   scale_x_discrete("Session", expand = c(0,.5)) +
   scale_y_continuous("Percent Correct") +
   ggtitle("Recognition Accuracy") +
   theme_bw(base_size = 15) +
   theme(plot.title = element_text(hjust = .5))
-  
+
+subject_number_annotations <- 
+  geom_text_repel(aes(label=subject),
+                  direction = "y",
+                  data = filter(percent_correct_per_sub_session,
+                                session == 4),
+                  nudge_x = 15, hjust = 0,
+                  min.segment.length = 1,
+                  box.padding = .15, 
+                  arrow = arrow(length = unit(0.02, "npc"),
+                                type = "open",
+                                ends = "last")
+                  )
+print(PC_sub_session_plot + subject_number_annotations)  
 ```
 
+```{r dprime_per_sub_session}
+speeded_dprime_by_sub_session <- filter(test, !is.na(type)) %>%
+  count(subject, session, type, speeded_correct) %>%
+  unite(col = "resp_type", type, speeded_correct) %>%
+  spread(resp_type, n) %>%
+  rename(FA = L_FALSE, CR = L_TRUE, M = T_FALSE, H = T_TRUE) %>%
+  mutate(dprime = qnorm(H/(M + H)) - qnorm(FA/(FA + CR)))
+
+counts_by_sub_session_bias <- filter(test, !is.na(type)) %>%
+  count(subject, session, type, pOld, delayed_correct) %>%
+  complete(subject, session, type, pOld, delayed_correct,
+           fill = list(n=0))
+
+delayed_dprime_by_sub_session <- 
+  group_by(counts_by_sub_session_bias,
+           subject, session, type, delayed_correct) %>%
+  summarise(n = sum(n)) %>%
+  unite(col = "resp_type", type, delayed_correct) %>%
+  spread(resp_type, n) %>%
+  rename(FA = L_FALSE, CR = L_TRUE, M = T_FALSE, H = T_TRUE) %>%
+  mutate(dprime = qnorm(H/(M + H)) - qnorm(FA/(FA + CR)))
+
+dprime_by_sub_session <- bind_rows("speeded" = speeded_dprime_by_sub_session,
+                                   "delayed" = delayed_dprime_by_sub_session,
+                                   .id = "judgment") %>%
+  select(subject, session, judgment, FA:dprime) %>%
+  mutate(judgment = factor(judgment, levels = c("speeded","delayed"),
+                           labels = c("Speeded", "Delayed")),
+         session = factor(session)
+         )
+
+rm(speeded_dprime_by_sub_session, delayed_dprime_by_sub_session)
+```
+
+```{r dprime_per_sub_session_display}
+subject_number_annotations <-
+  geom_text_repel(aes(label=subject),
+                  direction = "y",
+                  data = filter(dprime_by_sub_session,
+                                session == 4),
+                  nudge_x = 15, hjust = 0,
+                  min.segment.length = 1,
+                  box.padding = .15, 
+                  arrow = arrow(length = unit(0.02, "npc"),
+                                type = "open",
+                                ends = "last")
+                  )
+dprime_sub_sesssion_plot <- suppressMessages(
+  PC_sub_session_plot %+%
+    dprime_by_sub_session %+%
+    aes(y=dprime) +
+    subject_number_annotations +
+    scale_y_continuous("d'") +
+    ggtitle("Recognition Disciminability")
+  )
+
+print(dprime_sub_sesssion_plot)
+```
