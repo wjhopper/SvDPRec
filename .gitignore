@@ -1,4 +1,4 @@
 packrat/lib*/
 .Rproj.user
-README.html
+*.html
 .Rhistory

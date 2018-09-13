@@ -35,5 +35,13 @@ test <- mutate(test,
 
 ```{r n_per_sub_session}
 n_per_sub_session <- count(test, subject, session)
+
+spread(n_per_sub_session, session, n, fill = 0) %>%
+  rename(Subject = subject) %>%
+  knitr::kable() %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::add_header_above(c(" " = 1,
+                                 "Session" = length(unique(n_per_sub_session$session)))
+                               )
 ```
 
