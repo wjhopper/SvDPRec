@@ -13,7 +13,10 @@ knitr::opts_chunk$set(echo = FALSE)
 library(rprojroot)
 library(dplyr)
 library(tidyr)
+library(ggplot2)
+library(ggrepel)
 library(kableExtra)
+
 root_dir <- rprojroot::is_rstudio_project$find_file()
 source(file.path(root_dir, "R","load_data.R"))
 ```
@@ -33,6 +36,7 @@ test <- mutate(test,
          delayed_judgment, delayed_RT, delayed_correct)
 ```
 
+## Dataset Description
 ```{r n_per_sub_session}
 n_per_sub_session <- count(test, subject, session)
 
@@ -43,5 +47,43 @@ spread(n_per_sub_session, session, n, fill = 0) %>%
   kableExtra::add_header_above(c(" " = 1,
                                  "Session" = length(unique(n_per_sub_session$session)))
                                )
+```
+
+## Recognition Accuracy
+```{r accuracy_per_sub_session}
+percent_correct_per_sub_session <- filter(test, !is.na(type)) %>%
+  group_by(subject, session) %>%
+  summarise_at(c("speeded_correct", "delayed_correct"), mean) %>%
+  gather(key = "judgment", value = "PC", speeded_correct, delayed_correct) %>%
+  mutate(judgment = factor(sub("_correct", "", judgment, fixed = TRUE),
+                           levels = c("speeded","delayed"),
+                           labels = c("Speeded", "Delayed"))
+         )
+
+```
+
+```{r accuracy_per_sub_session_display, fig.align="center"}
+ggplot(percent_correct_per_sub_session,
+       aes(x=factor(session), y=PC, group=subject)) +
+  geom_point(size=1.5) +
+  geom_line(size=.7) +
+  geom_text_repel(aes(label=subject),
+                  direction="y",
+                  data = filter(percent_correct_per_sub_session,
+                                session==4),
+                  nudge_x = 15, hjust=0,
+                  min.segment.length = 1,
+                  box.padding = .15,
+                  arrow = arrow(length = unit(0.02, "npc"),
+                                type = "open",
+                                ends = "last")
+                  ) +
+  facet_wrap(judgment~.) +
+  scale_x_discrete("Session", expand = c(0,.5)) +
+  scale_y_continuous("Percent Correct") +
+  ggtitle("Recognition Accuracy") +
+  theme_bw(base_size = 15) +
+  theme(plot.title = element_text(hjust = .5))
+  
 ```
 

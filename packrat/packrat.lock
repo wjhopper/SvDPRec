@@ -104,10 +104,28 @@ Source: CRAN
 Version: 0.3.0
 Hash: 8d0a24d8245abbfa2b030460734495ab
 
+Package: ggplot2
+Source: CRAN
+Version: 3.0.0
+Hash: 8332448b76ff31472a1bf6dd31fcddb1
+Requires: digest, gtable, lazyeval, plyr, reshape2, rlang, scales,
+    tibble, viridisLite, withr
+
+Package: ggrepel
+Source: CRAN
+Version: 0.8.0
+Hash: 63ec70d64ffb925b3a20cd4aba6b9f2b
+Requires: Rcpp, ggplot2, scales
+
 Package: glue
 Source: CRAN
 Version: 1.3.0
 Hash: 1fbde6dec830370be696eee8ef31c9e4
+
+Package: gtable
+Source: CRAN
+Version: 0.2.0
+Hash: cd78381a9d3fea966ac39bd0daaf5554
 
 Package: highr
 Source: CRAN
@@ -154,6 +172,11 @@ Package: labeling
 Source: CRAN
 Version: 0.3
 Hash: ecf589b42cd284b03a4beb9665482d3e
+
+Package: lazyeval
+Source: CRAN
+Version: 0.2.1
+Hash: 88926ad9c43581fd0822a37c8ed09f05
 
 Package: magrittr
 Source: CRAN
@@ -203,6 +226,12 @@ Source: CRAN
 Version: 0.2.0
 Hash: 81a8008a5e7858552503935f1abe48aa
 
+Package: plyr
+Source: CRAN
+Version: 1.8.4
+Hash: 05d65ee369a267f0d0c56604000c69b5
+Requires: Rcpp
+
 Package: purrr
 Source: CRAN
 Version: 0.2.5
@@ -214,6 +243,12 @@ Source: CRAN
 Version: 1.1.1
 Hash: 23cf0dbcf5e1ccd3ec5832aaaedc1fdc
 Requires: BH, R6, Rcpp, hms, tibble
+
+Package: reshape2
+Source: CRAN
+Version: 1.4.3
+Hash: a08472524968be4e233b4c8d0ae5aef1
+Requires: Rcpp, plyr, stringr
 
 Package: rlang
 Source: CRAN
@@ -301,6 +336,11 @@ Package: viridisLite
 Source: CRAN
 Version: 0.3.0
 Hash: 78bb072c4f9e729a283d4c40ec93f9c6
+
+Package: withr
+Source: CRAN
+Version: 2.1.2
+Hash: d534108bcd5f34ec73e9eb523751ba20
 
 Package: xfun
 Source: CRAN
