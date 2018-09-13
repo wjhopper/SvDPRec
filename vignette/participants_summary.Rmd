@@ -42,7 +42,7 @@ n_per_sub_session <- count(test, subject, session)
 
 spread(n_per_sub_session, session, n, fill = 0) %>%
   rename(Subject = subject) %>%
-  knitr::kable() %>%
+  knitr::kable(caption = "Trials per subject and session") %>%
   kableExtra::kable_styling(full_width = FALSE) %>%
   kableExtra::add_header_above(c(" " = 1,
                                  "Session" = length(unique(n_per_sub_session$session)))
@@ -150,5 +150,24 @@ dprime_sub_sesssion_plot <- ggplot(dprime_by_sub_session,
   theme(plot.title = element_text(hjust = .5))
 
 print(dprime_sub_sesssion_plot)
+```
+
+```{r transitions}
+transitions <- count(test, pOld, speeded_judgment, delayed_judgment) %>%
+  group_by(pOld) %>%
+  mutate(percent = n/sum(n)) %>%
+  select(-n) %>%
+  mutate_at(c("speeded_judgment", "delayed_judgment"), factor, labels = c("New", "Old")) %>%
+  spread(key = delayed_judgment, value = percent)
+
+kable(transitions, format = "html",
+      col.names = c("p(Old)", "Speeded", "New", "Old"),
+      digits=3,
+      caption = "Speeded/Delayed judgment contingency table, grouped by bias hint level.") %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::add_header_above(c(" " = 2, "Delayed" = 2)) %>%
+  kableExtra::column_spec(1, bold = T, color = "black") %>%
+  kableExtra::collapse_rows(1)
+  
 ```
 
