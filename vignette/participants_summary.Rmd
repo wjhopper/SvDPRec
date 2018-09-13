@@ -91,60 +91,64 @@ print(PC_sub_session_plot + subject_number_annotations)
 ```
 
 ```{r dprime_per_sub_session}
-speeded_dprime_by_sub_session <- filter(test, !is.na(type)) %>%
-  count(subject, session, type, speeded_correct) %>%
-  unite(col = "resp_type", type, speeded_correct) %>%
-  spread(resp_type, n) %>%
-  rename(FA = L_FALSE, CR = L_TRUE, M = T_FALSE, H = T_TRUE) %>%
-  mutate(dprime = qnorm(H/(M + H)) - qnorm(FA/(FA + CR)))
+speeded_counts_by_sub_session <- filter(test, !is.na(type)) %>%
+  count(subject, session, strength, speeded_correct) %>%
+  complete(subject, session, strength, speeded_correct,
+           fill = list(n=0)) %>%
+  rename(correct = speeded_correct)
 
-counts_by_sub_session_bias <- filter(test, !is.na(type)) %>%
-  count(subject, session, type, pOld, delayed_correct) %>%
-  complete(subject, session, type, pOld, delayed_correct,
-           fill = list(n=0))
+delayed_counts_by_sub_session_bias <- filter(test, !is.na(type)) %>%
+  count(subject, session, strength, pOld, delayed_correct) %>%
+  complete(subject, session, strength, pOld, delayed_correct,
+           fill = list(n=0)) %>%
+  rename(correct = delayed_correct)
 
-delayed_dprime_by_sub_session <- 
-  group_by(counts_by_sub_session_bias,
-           subject, session, type, delayed_correct) %>%
-  summarise(n = sum(n)) %>%
-  unite(col = "resp_type", type, delayed_correct) %>%
-  spread(resp_type, n) %>%
-  rename(FA = L_FALSE, CR = L_TRUE, M = T_FALSE, H = T_TRUE) %>%
-  mutate(dprime = qnorm(H/(M + H)) - qnorm(FA/(FA + CR)))
-
-dprime_by_sub_session <- bind_rows("speeded" = speeded_dprime_by_sub_session,
-                                   "delayed" = delayed_dprime_by_sub_session,
+dprime_by_sub_session <- bind_rows("speeded" = speeded_counts_by_sub_session,
+                                   "delayed" = group_by(delayed_counts_by_sub_session_bias,
+                                                        subject, session, strength, correct) %>%
+                                       summarise(n = sum(n)),
                                    .id = "judgment") %>%
-  select(subject, session, judgment, FA:dprime) %>%
-  mutate(judgment = factor(judgment, levels = c("speeded","delayed"),
+  select(subject, session, judgment, strength, correct, n) %>%
+  unite(col = "resp_type", strength, correct) %>%
+  spread(resp_type, n) %>%
+  rename(FA = L_FALSE, CR = L_TRUE,
+         M_S = S_FALSE, H_S = S_TRUE,
+         M_W = W_FALSE, H_W = W_TRUE) %>%
+  mutate(S_dprime = qnorm(H_S/(M_S + H_S)) - qnorm(FA/(FA + CR)),
+         S_dprime = replace(S_dprime, S_dprime == Inf, qnorm(1-1/(2*H_S[S_dprime == Inf]))),
+         W_dprime = qnorm(H_W/(M_W + H_W)) - qnorm(FA/(FA + CR))) %>%
+  gather(key = "strength", value = "dprime", S_dprime, W_dprime) %>%
+  mutate(strength = factor(sub("_dprime", "", strength), levels = c("S","W"),
+                           labels = c("Strong", "Weak")),
+         judgment = factor(judgment, levels = c("speeded","delayed"),
                            labels = c("Speeded", "Delayed")),
          session = factor(session)
          )
-
-rm(speeded_dprime_by_sub_session, delayed_dprime_by_sub_session)
 ```
 
-```{r dprime_per_sub_session_display}
+```{r dprime_per_sub_session_display, fig.height=8}
 subject_number_annotations <-
+
+dprime_sub_sesssion_plot <- ggplot(dprime_by_sub_session,
+                                   aes(x=session, y=dprime, group=subject)) +
+  geom_point(size=1.5) +
+  geom_line(size=.7) +
   geom_text_repel(aes(label=subject),
                   direction = "y",
-                  data = filter(dprime_by_sub_session,
-                                session == 4),
+                  data = filter(dprime_by_sub_session, session == 4),
                   nudge_x = 15, hjust = 0,
-                  min.segment.length = 1,
-                  box.padding = .15, 
+                  min.segment.length = 1, box.padding = .15, 
                   arrow = arrow(length = unit(0.02, "npc"),
                                 type = "open",
                                 ends = "last")
-                  )
-dprime_sub_sesssion_plot <- suppressMessages(
-  PC_sub_session_plot %+%
-    dprime_by_sub_session %+%
-    aes(y=dprime) +
-    subject_number_annotations +
-    scale_y_continuous("d'") +
-    ggtitle("Recognition Disciminability")
-  )
+                  ) +
+  facet_grid(strength ~ judgment) +
+  scale_x_discrete("Session", expand = c(0,.5)) +
+  scale_y_continuous("d'") +
+  ggtitle("Recognition Discriminability") +
+  theme_bw(base_size = 15) +
+  theme(plot.title = element_text(hjust = .5))
 
 print(dprime_sub_sesssion_plot)
 ```
+
