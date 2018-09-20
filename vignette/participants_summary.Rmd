@@ -10,7 +10,9 @@ output:
 
 <style>
   img {max-width: 150%;}
+  #dataset-description {overflow: auto;}
 </style>
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
 library(rprojroot)
@@ -46,10 +48,41 @@ n_per_sub_session <- count(test, subject, session)
 spread(n_per_sub_session, session, n, fill = 0) %>%
   rename(Subject = subject) %>%
   knitr::kable(caption = "Trials per subject and session") %>%
-  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
   kableExtra::add_header_above(c(" " = 1,
                                  "Session" = length(unique(n_per_sub_session$session)))
                                )
+```
+
+```{r base_rates}
+count(test, pOld, type) %>%
+  mutate(type = factor(type, levels=c("L","T",NA), exclude=NULL,
+                       labels = c("Lure","Target", "XXXXXX"))
+         ) %>%
+  kable(col.names = c("p(Old)", "Probe Type", "Count"),
+        caption = "Base rate of probe types") %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+  kableExtra::column_spec(1, bold = T, color = "black") %>%
+  kableExtra::collapse_rows(1)
+```
+
+```{r transitions}
+transitions <- filter(test, !is.na(type)) %>%
+  count(pOld, speeded_judgment, delayed_judgment) %>%
+  group_by(pOld) %>%
+  mutate(percent = n/sum(n)) %>%
+  select(-n) %>%
+  mutate_at(c("speeded_judgment", "delayed_judgment"), factor, labels = c("New", "Old")) %>%
+  spread(key = delayed_judgment, value = percent)
+
+kable(transitions, format = "html",
+      col.names = c("p(Old)", "Speeded", "New", "Old"),
+      digits=3,
+      caption = "Speeded/Delayed judgment contingency table, grouped by bias hint level.") %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "left") %>%
+  kableExtra::add_header_above(c(" " = 2, "Delayed" = 2)) %>%
+  kableExtra::column_spec(1, bold = T, color = "black") %>%
+  kableExtra::collapse_rows(1)
 ```
 
 ## Recognition Accuracy
@@ -155,24 +188,7 @@ dprime_sub_sesssion_plot <- ggplot(dprime_by_sub_session,
 print(dprime_sub_sesssion_plot)
 ```
 
-```{r transitions}
-transitions <- filter(test, !is.na(type)) %>%
-  count(pOld, speeded_judgment, delayed_judgment) %>%
-  group_by(pOld) %>%
-  mutate(percent = n/sum(n)) %>%
-  select(-n) %>%
-  mutate_at(c("speeded_judgment", "delayed_judgment"), factor, labels = c("New", "Old")) %>%
-  spread(key = delayed_judgment, value = percent)
 
-kable(transitions, format = "html",
-      col.names = c("p(Old)", "Speeded", "New", "Old"),
-      digits=3,
-      caption = "Speeded/Delayed judgment contingency table, grouped by bias hint level.") %>%
-  kableExtra::kable_styling(full_width = FALSE) %>%
-  kableExtra::add_header_above(c(" " = 2, "Delayed" = 2)) %>%
-  kableExtra::column_spec(1, bold = T, color = "black") %>%
-  kableExtra::collapse_rows(1)
-```
 
 ## Empirical R.O.C. Function
 ```{r ROC_by_subject}
