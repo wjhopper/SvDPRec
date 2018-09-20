@@ -21,10 +21,7 @@ load_data <- function(phase = c("Test","Slist","Points","Prac","TwoBack")) {
   file_names <- list.files(file.path(root_dir, "data"),
                            pattern = prefix,
                            full.names = TRUE)
-  # dataset <- do.call(rbind,
-  #                    lapply(file_names, read.table,
-  #                           sep=",", stringsAsFactors=FALSE)
-  #                    )
+
   dataset_list <- lapply(file_names, read.table,
                          sep=",", stringsAsFactors=FALSE)
   names(dataset_list) <- file_names

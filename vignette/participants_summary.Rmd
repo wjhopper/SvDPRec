@@ -224,10 +224,74 @@ ggplot(ROC_by_sub, aes(x=FAR, y=HR, color = factor(pOld), group=subject)) +
                      labels = c(0,0.25, 0.5, 0.75, 1)) +
   scale_y_continuous("Hit Rate", limits = c(0,1)) +
   scale_color_manual("p(Old)",
-                     values = c("#d82d2d", "#d8d834", "#17b50c"),
-                     position=c("top")) +
+                     values = c("#d82d2d", "#d8d834", "#17b50c")) +
   guides(colour = guide_legend(override.aes = list(size = 4))) +
   coord_fixed() +
   theme_bw(base_size = 13) +
   theme(legend.position='top')
+```
+
+## Response Time
+```{r response_times}
+RT_by_sub_session_type <- filter(test, !is.na(type)) %>%
+  select(subject, session, strength, speeded_judgment, speeded_RT) %>%
+  group_by(subject, session, strength, speeded_judgment) %>%
+  summarise(speeded_RT= list(as.data.frame(t(
+    quantile(speeded_RT, c(.1, .5, .9))
+    )))) %>%
+  ungroup() %>%
+  unnest(speeded_RT)
+
+RT_by_sub_type_acc <- filter(test, !is.na(type)) %>%
+  select(subject, strength, speeded_correct, speeded_RT) %>%
+  group_by(subject, strength, speeded_correct) %>%
+  summarise(speeded_RT= list(as.data.frame(t(
+    quantile(speeded_RT, c(.1, .5, .9))
+    )))) %>%
+  ungroup() %>%
+  unnest(speeded_RT)
+```
+
+```{r response_times_display1, fig.height=18, fig.width=10}
+ggplot(RT_by_sub_session_type,
+       aes(x=session, y=`50%`, color=strength,
+           group=interaction(subject,strength)
+           )
+       ) +
+  geom_point(size=2) +
+  geom_line() +
+  facet_wrap(~ subject + speeded_judgment,
+             labeller = labeller(subject=label_both,
+                                 speeded_judgment=as_labeller(c("n" = "'New'", 
+                                                                "o" = "'Old'")),
+                                 .multi_line = FALSE),
+             ncol=4, scales = "free_y"
+             ) +
+  scale_y_continuous("Median RT") +
+  scale_color_discrete(labels = c("L"="Lure", "W"="Weak","S"="Strong"),
+                       breaks = c("L","W","S"),
+                       position="top") +
+  ggtitle("Response time by subject and session") +
+  theme_bw(base_size = 14) +
+  theme(legend.position='top')
+```
+
+```{r response_times_display2, fig.height=10, fig.width=7}
+ggplot(RT_by_sub_type_acc,
+       aes(x=subject, y=`50%`, ymin=`10%`, ymax=`90%`)
+       ) +
+  geom_point(size=2) +
+  geom_errorbar() +
+  facet_grid(strength ~ speeded_correct,
+             labeller = labeller(speeded_correct = as_labeller(
+                                    c("FALSE" = "Incorrect",
+                                      "TRUE" = "Correct")
+                                    ),
+                                 strength = as_labeller(
+                                    c("L"="Lure", "W"="Weak","S"="Strong")
+                                 )
+             )) +
+  scale_y_continuous("Median RT") +
+  ggtitle("Response time by subject") +
+  theme_bw(base_size = 14)
 ```
