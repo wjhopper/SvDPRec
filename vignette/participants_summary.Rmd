@@ -8,6 +8,9 @@ output:
     toc_depth: 3
 ---
 
+<style>
+  img {max-width: 150%;}
+</style>
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
 library(rprojroot)
@@ -153,7 +156,8 @@ print(dprime_sub_sesssion_plot)
 ```
 
 ```{r transitions}
-transitions <- count(test, pOld, speeded_judgment, delayed_judgment) %>%
+transitions <- filter(test, !is.na(type)) %>%
+  count(pOld, speeded_judgment, delayed_judgment) %>%
   group_by(pOld) %>%
   mutate(percent = n/sum(n)) %>%
   select(-n) %>%
@@ -168,6 +172,46 @@ kable(transitions, format = "html",
   kableExtra::add_header_above(c(" " = 2, "Delayed" = 2)) %>%
   kableExtra::column_spec(1, bold = T, color = "black") %>%
   kableExtra::collapse_rows(1)
-  
 ```
 
+## Empirical R.O.C. Function
+```{r ROC_by_subject}
+ROC_by_sub <- group_by(delayed_counts_by_sub_session_bias,
+                       subject, strength, pOld, correct) %>%
+  summarise(n = sum(n)) %>%
+  unite(col = "resp_type", strength, correct) %>%
+  spread(resp_type, n) %>%
+  rename(FA = L_FALSE, CR = L_TRUE,
+         M_S = S_FALSE, H_S = S_TRUE,
+         M_W = W_FALSE, H_W = W_TRUE) %>%
+  mutate(FAR = FA/(FA + CR),
+         W_HR = H_W/(M_W + H_W),
+         S_HR = H_S/(M_S + H_S)) %>%
+  select(subject, pOld, FAR, W_HR, S_HR) %>%
+  gather("strength", "HR", W_HR, S_HR) %>%
+  mutate(strength = factor(strength, levels=c("W_HR","S_HR")))
+```
+
+```{r ROC_by_subject_display, fig.height=18, fig.width=10}
+ggplot(ROC_by_sub, aes(x=FAR, y=HR, color = factor(pOld), group=subject)) +
+  geom_line(size=.8, color="black") +
+  geom_point(size=2) +
+  facet_wrap(~ subject + strength ,
+             labeller = labeller(
+               strength = as_labeller(c("W_HR" = "'Weak' Target",
+                                        "S_HR" = "'Strong' Target")
+                                      ),
+               subject = label_both,
+               .multi_line = FALSE),
+             ncol=4) +
+  scale_x_continuous("False Alarm Rate", limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_color_manual("p(Old)",
+                     values = c("#d82d2d", "#d8d834", "#17b50c"),
+                     position=c("top")) +
+  guides(colour = guide_legend(override.aes = list(size = 4))) +
+  coord_fixed() +
+  theme_bw(base_size = 13) +
+  theme(legend.position='top')
+```
