@@ -1,0 +1,126 @@
+---
+title: "UVSD Modeling"
+author: "William Hopper"
+date: "`r format(Sys.Date(), '%b %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
+library(rprojroot)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(kableExtra)
+library(optimx)
+library(foreach)
+root_dir <- rprojroot::is_rstudio_project$find_file()
+```
+
+```{r load_data}
+load(file.path(root_dir, "data","SvDPRec.Rdata"))
+test <- select(test, -list)
+```
+
+```{r SDT_model_functions}
+SDT <- function(d, s, crit) {
+
+  # if (is.unsorted(rev(crit))) {
+  #   # warning("Criterion locations will be sorted in descending order")
+  #   crit <- sort(crit, decreasing = TRUE)
+  # }
+  
+  if (length(d) != 2L || length(s) != 2L) {
+    stop("Only 2 target distributions may be specified")
+  }
+  
+  FAR <- pnorm(crit, lower.tail = FALSE)
+  HR_W <- pnorm(crit, mean = d[1], sd = s[1], lower.tail = FALSE)
+  HR_S <- pnorm(crit, mean = d[2], sd = s[2], lower.tail = FALSE)
+  
+  return(list("HitRate_Strong" = HR_S,
+              "HitRate_Weak" = HR_W,
+              "FalseAlarmRate" = FAR)
+         )
+}
+
+SDT_LL <- function(H_S, H_W, FA, ...) {
+
+  SDT_preds <- SDT(...)
+  LL <- c(dbinom(H_S$H_S, size = H_S$S_N, prob = SDT_preds$HitRate_Strong, log=TRUE),
+          dbinom(H_W$H_W, size = H_W$W_N, prob = SDT_preds$HitRate_Weak, log=TRUE),
+          dbinom(FA$FA, size = FA$FA_N, prob = SDT_preds$FalseAlarmRate, log=TRUE)
+          )
+  return(-sum(LL))
+}
+
+## A small wrapper around the likelihood function that makes it suitable
+## for optimization. It takes the parameter values as a named vector, matching the 
+## vector element names with argument names for the SDT_LL function. It also detects
+## whether the likelhood function is infinite (which optimx et al. doesn't like), and
+## instead returns the largest representable on the current machine.
+
+fit_SDT <- function(theta, ...) {
+  negLL <- SDT_LL(d = theta[c("d.W","d.S")], s = theta[c("s.W","s.S")],
+                  crit = theta[c("crit1", "crit2", "crit3")],
+                  ...)
+  if (is.infinite(negLL) || is.nan(negLL)) {
+    negLL <- .Machine$double.xmax
+  }
+
+  return(negLL)
+}
+```
+
+
+```{r data}
+delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
+  select(-starts_with("speeded")) %>%
+  rename(correct = delayed_correct) %>%
+  count(subject, strength, pOld, correct) %>%
+  complete(subject, strength, pOld, correct,
+           fill = list(n=0)) %>%
+  unite(col = "resp_type", strength, correct) %>%
+  spread(resp_type, n) %>%
+  rename(FA = L_FALSE, CR = L_TRUE,
+         M_S = S_FALSE, H_S = S_TRUE,
+         M_W = W_FALSE, H_W = W_TRUE) %>%
+  mutate(FA_N = FA + CR,
+         S_N = M_S + H_S,
+         W_N = M_W + H_W) %>%
+  select(subject, pOld, FA, FA_N, H_S, S_N, H_W, W_N)
+
+```
+
+```{r fit}
+UVSD_fits <- foreach(s = split(delayed_counts_by_sub_bias,
+                               delayed_counts_by_sub_bias$subject)
+                     ) %do% {
+  fit <- optimx(par = c(d=c("W"=1.5, "S"=2.5),
+                        s= c("W"=1.15, "S"=1.25),
+                        crit = c(1.25, 1, .75)),
+              fn = fit_SDT, method = "nlminb",
+              itnmax = 3000,
+              lower = c(0, 0, 0.1, 0.1, -3, -3, -3),
+              upper = c(5, 5, 2, 2, 3, 3, 3),
+              control = list(kkt=FALSE),
+              H_S = s[c("H_S","S_N")],
+              H_W = s[c("H_W", "W_N")],
+              FA = s[c("FA", "FA_N")]
+              )
+  fit$subject <- s$subject[1]
+  fit <- select(fit, subject, d.W:convcode) %>%
+    mutate(value = -value) %>%
+    rename(LL = value)
+  }
+
+```
+
+```{r}
+kable(bind_rows(UVSD_fits), digits=3, escape = FALSE) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
