@@ -163,8 +163,6 @@ dprime_by_sub_session <- bind_rows("speeded" = speeded_counts_by_sub_session,
 ```
 
 ```{r dprime_per_sub_session_display, fig.height=8}
-subject_number_annotations <-
-
 dprime_sub_sesssion_plot <- ggplot(dprime_by_sub_session,
                                    aes(x=session, y=dprime, group=subject)) +
   geom_point(size=1.5) +
@@ -227,6 +225,7 @@ ggplot(ROC_by_sub, aes(x=FAR, y=HR, color = factor(pOld), group=subject)) +
                      values = c("#d82d2d", "#d8d834", "#17b50c")) +
   guides(colour = guide_legend(override.aes = list(size = 4))) +
   coord_fixed() +
+  ggtitle("ROC for delayed judgments") +
   theme_bw(base_size = 13) +
   theme(legend.position='top')
 ```
