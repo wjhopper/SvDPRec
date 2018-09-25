@@ -33,8 +33,12 @@ SDT <- function(d, s, crit) {
   #   crit <- sort(crit, decreasing = TRUE)
   # }
   
-  if (length(d) != 2L || length(s) != 2L) {
+  if (length(d) != 2L) {
     stop("Only 2 target distributions may be specified")
+  }
+
+  if (length(s) == 1L) {
+    s <- c(s, s)
   }
   
   FAR <- pnorm(crit, lower.tail = FALSE)
@@ -64,7 +68,9 @@ SDT_LL <- function(H_S, H_W, FA, ...) {
 ## instead returns the largest representable on the current machine.
 
 fit_SDT <- function(theta, ...) {
-  negLL <- SDT_LL(d = theta[c("d.W","d.S")], s = theta[c("s.W","s.S")],
+
+  negLL <- SDT_LL(d = theta[c("d.W","d.S")],
+                  s = theta[startsWith(names(theta), "s")],
                   crit = theta[c("crit1", "crit2", "crit3")],
                   ...)
   if (is.infinite(negLL) || is.nan(negLL)) {
@@ -96,25 +102,36 @@ delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
 ```
 
 ```{r fit}
-UVSD_fits <- foreach(s = split(delayed_counts_by_sub_bias,
-                               delayed_counts_by_sub_bias$subject)
+UVSD_fits <- foreach(sub = split(delayed_counts_by_sub_bias,
+                                 delayed_counts_by_sub_bias$subject)
                      ) %do% {
-  fit <- optimx(par = c(d=c("W"=1.5, "S"=2.5),
-                        s= c("W"=1.15, "S"=1.25),
+
+  fit <- optimx(par = c("d.W"=1.5, "d.S"=2.5, "s" = 1.2,
                         crit = c(1.25, 1, .75)),
-              fn = fit_SDT, method = "nlminb",
-              itnmax = 3000,
-              lower = c(0, 0, 0.1, 0.1, -3, -3, -3),
-              upper = c(5, 5, 2, 2, 3, 3, 3),
-              control = list(kkt=FALSE),
-              H_S = s[c("H_S","S_N")],
-              H_W = s[c("H_W", "W_N")],
-              FA = s[c("FA", "FA_N")]
+                fn = fit_SDT,
+                method = "nlminb",
+                itnmax = 3000,
+                lower = c(0, 0, 0.1, 0.1, -3, -3, -3),
+                upper = c(5, 5, 2, 2, 3, 3, 3),
+                control = list(kkt=FALSE),
+                H_S = sub[c("H_S","S_N")],
+                H_W = sub[c("H_W", "W_N")],
+                FA = sub[c("FA", "FA_N")]
               )
-  fit$subject <- s$subject[1]
-  fit <- select(fit, subject, d.W:convcode) %>%
-    mutate(value = -value) %>%
-    rename(LL = value)
+  ## Add subject number as first column of fit table
+  fit$subject <- sub$subject[1]
+  fit <- select(fit, subject, d.W:convcode)
+  
+  ## Order the criterion columns from largest (most conservative) to lowest (most liberal)
+  crit_columns <- startsWith(names(fit), "crit")
+  decreasing_crit_values <- sort(unlist(fit[crit_columns]), decreasing = TRUE)
+  names(decreasing_crit_values) <- paste0("crit", 1:length(decreasing_crit_values))
+  fit[crit_columns] <- as.list(decreasing_crit_values)
+  
+  ## This is a max lik fit, so "Value" so it should be renamed and have sign flipped (as optimization routine minimized negative LL)
+  fit <- rename(fit, LL = value)
+  fit <- mutate(fit, LL = -LL)
+  
   }
 
 ```
