@@ -17,6 +17,9 @@ library(ggplot2)
 library(kableExtra)
 library(optimx)
 library(foreach)
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
 root_dir <- rprojroot::is_rstudio_project$find_file()
 ```
 
@@ -139,5 +142,33 @@ UVSD_fits <- foreach(sub = split(delayed_counts_by_sub_bias,
 ```{r}
 kable(bind_rows(UVSD_fits), digits=3, escape = FALSE) %>%
   kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r stan_model}
+# Create an array suitable for passing into stan, so it can be turned into an array of matrices
+# The final produce should be 14 x 3 x 3, with subject along dim 1, bias level along dim 2,
+# and strength (lure, weak, strong) along dim 3.
+
+delayed_counts_by_sub_bias <- arrange(delayed_counts_by_sub_bias, subject, desc(pOld))
+
+yes_matrix = t(as.matrix(delayed_counts_by_sub_bias[c('FA','H_W','H_S')]))
+dim(yes_matrix) <- c(3, 3, 14)
+yes_matrix <- aperm(yes_matrix, c(2,1,3))
+
+trial_matrix = t(as.matrix(delayed_counts_by_sub_bias[c('FA_N','W_N','S_N')]))
+dim(trial_matrix) <- c(3, 3, 14)
+trial_matrix <- aperm(trial_matrix, c(2,1,3))
+
+standata <- list(yeses = yes_matrix, trials = trial_matrix,
+                 Nsubs = length(unique(delayed_counts_by_sub_bias$subject)))
+
+fit <- stan(file = file.path(root_dir, "R","UVSD.stan"),
+            data = standata,
+            pars = 'log_sigma',
+            include = FALSE,
+            iter = 2500,
+            chains = 1,
+            seed = 1235,
+            control = list(adapt_delta=.95, max_treedepth=20))
 ```
 
