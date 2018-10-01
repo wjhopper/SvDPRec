@@ -28,6 +28,7 @@ load(file.path(root_dir, "data","SvDPRec.Rdata"))
 test <- select(test, -list)
 ```
 
+## Subject-wise Maximum Likelihood Estimation
 ```{r SDT_model_functions}
 SDT <- function(d, s, crit) {
 
@@ -85,7 +86,7 @@ fit_SDT <- function(theta, ...) {
 ```
 
 
-```{r data}
+```{r cell_counts}
 delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
   select(-starts_with("speeded")) %>%
   rename(correct = delayed_correct) %>%
@@ -104,7 +105,7 @@ delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
 
 ```
 
-```{r fit}
+```{r MLE_fit, dependson="cell_counts"}
 UVSD_fits <- foreach(sub = split(delayed_counts_by_sub_bias,
                                  delayed_counts_by_sub_bias$subject)
                      ) %do% {
@@ -137,13 +138,35 @@ UVSD_fits <- foreach(sub = split(delayed_counts_by_sub_bias,
   
   }
 
+UVSD_fits <- bind_rows(UVSD_fits)
 ```
 
-```{r}
-kable(bind_rows(UVSD_fits), digits=3, escape = FALSE) %>%
-  kableExtra::kable_styling(full_width = FALSE)
+```{r formatted_column_names}
+parameter_colnames <- c("d'<sub>W</sub>", "d'<sub>S</sub>", "\u03c3",
+                        "C<sub>c</sub>", "C<sub>n</sub>", "C<sub>l</sub>")
+
+hyperparam_colnames <- rep(c("\u03BC", "\u03c3"), 6)
+hyperparam_colnames[5] <- "log-\u03BC"
+                                
 ```
 
+
+```{r MLE_fit_display, dependson=c("formatted_column_names","MLE_fit")}
+MLE_param_means <- colMeans(select(UVSD_fits, d.W:crit3))
+
+kable(UVSD_fits, digits=3, escape = FALSE,
+      caption = "MLE parameter estimates",
+      col.names = c("Subject", parameter_colnames, names(UVSD_fits)[8:12])) %>%
+  kableExtra::kable_styling(full_width = FALSE, position="left")
+
+kable(matrix(MLE_param_means, ncol=6), digits=3, escape = FALSE,
+      caption = "Average parameters",
+      col.names = parameter_colnames) %>%
+  kableExtra::kable_styling(full_width = FALSE, position="left")
+```
+
+## Hierarchical Bayesian Estimation
+### Will's Stan Model
 ```{r stan_model, cache=TRUE}
 # Create an array suitable for passing into stan, so it can be turned into an array of matrices
 # The final produce should be 14 x 3 x 3, with subject along dim 1, bias level (conservative --> liberal) along dim 2,
@@ -178,8 +201,10 @@ fit <- stan(file = file.path(root_dir, "R","UVSD.stan"),
             )
 ```
 
-```{r stan_model_disp, cache=TRUE, dependson="stan_model"}
+```{r parameter_summaries, cache=TRUE, dependson=c("stan_model","formatted_column_names")}
 posterior <- as.data.frame(extract(fit))
+
+## Subject level parameters
 sub_level_params <- select(posterior, contains("_sub")) %>%
   summarise_all(.funs = funs(mean, median)) %>%
   gather("parameter","value") %>%
@@ -206,16 +231,29 @@ sub_crit <- filter(sub_level_params, parameter=="crit_sub", statistic=="median")
   select(subject, parameter, which, value) %>%
   unite("parameter", parameter, which) %>%
   spread(parameter, value) %>%
-  rename(crit1 = crit_sub_1, crit2 = crit_sub_2, crit3 = crit_sub_3)
+  select(subject, crit_sub_3, crit_sub_2, crit_sub_1)
 
 sub_param_means <- inner_join(subject_dprimes, sub_sigma, by = "subject") %>%
   inner_join(sub_crit, by="subject")
-  
-  
+
+## Hyper Parameters
+hyper <- select(posterior, contains("_pop")) %>%
+  summarise_all(.funs = funs(mean)) %>%
+  select(mu_pop.1, mu_pop_SD.1, mu_pop.2, mu_pop_SD.2, log_sigma_pop, log_sigma_pop_SD,
+         crit_pop.3, crit_pop_SD.3, crit_pop.2, crit_pop_SD.2, crit_pop.1, crit_pop_SD.1)
 ```
 
-```{r posterior_display}
-kable(sub_param_means, digits=3) %>%
-  kable_styling(full_width = FALSE)
+```{r posterior_display, dependson=c('formatted_column_names','parameter_summaries')}
+kable(sub_param_means, digits=3, escape = FALSE,
+      caption = "Subject-level parameter means",
+      col.names = c("Subject", parameter_colnames)) %>%
+  kable_styling(full_width = FALSE, position = "left") 
+
+kable(hyper, digits=3, escape = FALSE,
+      caption = "Hyperparameter means",
+      col.names = hyperparam_colnames) %>%
+  kable_styling(full_width = FALSE, position = "left") %>%
+  add_header_above(setNames(rep(2, 6), parameter_colnames),
+                   escape = FALSE)
 ```
 
