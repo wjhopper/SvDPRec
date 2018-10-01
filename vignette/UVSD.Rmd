@@ -105,7 +105,7 @@ delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
 
 ```
 
-```{r MLE_fit, dependson="cell_counts"}
+```{r MLE_fit, cache=TRUE}
 UVSD_fits <- foreach(sub = split(delayed_counts_by_sub_bias,
                                  delayed_counts_by_sub_bias$subject)
                      ) %do% {
@@ -151,7 +151,7 @@ hyperparam_colnames[5] <- "log-\u03BC"
 ```
 
 
-```{r MLE_fit_display, dependson=c("formatted_column_names","MLE_fit")}
+```{r MLE_fit_display, dependson=c("MLE_fit")}
 MLE_param_means <- colMeans(select(UVSD_fits, d.W:crit3))
 
 kable(UVSD_fits, digits=3, escape = FALSE,
@@ -167,6 +167,9 @@ kable(matrix(MLE_param_means, ncol=6), digits=3, escape = FALSE,
 
 ## Hierarchical Bayesian Estimation
 ### Will's Stan Model
+```{stan stan_model_external, eval=FALSE, echo=TRUE, output.var='modelstring', code=readLines(file.path(root_dir, "R","UVSD.stan"))}
+```
+
 ```{r stan_model, cache=TRUE}
 # Create an array suitable for passing into stan, so it can be turned into an array of matrices
 # The final produce should be 14 x 3 x 3, with subject along dim 1, bias level (conservative --> liberal) along dim 2,
@@ -201,7 +204,7 @@ fit <- stan(file = file.path(root_dir, "R","UVSD.stan"),
             )
 ```
 
-```{r parameter_summaries, cache=TRUE, dependson=c("stan_model","formatted_column_names")}
+```{r parameter_summaries, cache=TRUE, dependson=c("stan_model")}
 posterior <- as.data.frame(extract(fit))
 
 ## Subject level parameters
@@ -243,7 +246,7 @@ hyper <- select(posterior, contains("_pop")) %>%
          crit_pop.3, crit_pop_SD.3, crit_pop.2, crit_pop_SD.2, crit_pop.1, crit_pop_SD.1)
 ```
 
-```{r posterior_display, dependson=c('formatted_column_names','parameter_summaries')}
+```{r posterior_display, dependson=c('parameter_summaries')}
 kable(sub_param_means, digits=3, escape = FALSE,
       caption = "Subject-level parameter means",
       col.names = c("Subject", parameter_colnames)) %>%
