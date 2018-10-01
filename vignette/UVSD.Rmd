@@ -144,19 +144,25 @@ kable(bind_rows(UVSD_fits), digits=3, escape = FALSE) %>%
   kableExtra::kable_styling(full_width = FALSE)
 ```
 
-```{r stan_model}
+```{r stan_model, cache=TRUE}
 # Create an array suitable for passing into stan, so it can be turned into an array of matrices
-# The final produce should be 14 x 3 x 3, with subject along dim 1, bias level along dim 2,
+# The final produce should be 14 x 3 x 3, with subject along dim 1, bias level (conservative --> liberal) along dim 2,
 # and strength (lure, weak, strong) along dim 3.
-
-delayed_counts_by_sub_bias <- arrange(delayed_counts_by_sub_bias, subject, desc(pOld))
+delayed_counts_by_sub_bias <- arrange(delayed_counts_by_sub_bias, subject, desc(pOld)) %>%
+  mutate(H_S = replace(H_S, H_S == S_N, H_S[H_S == S_N]-1))
 
 yes_matrix = t(as.matrix(delayed_counts_by_sub_bias[c('FA','H_W','H_S')]))
 dim(yes_matrix) <- c(3, 3, 14)
+dimnames(yes_matrix) <- list("Strength" = c("Lure","Weak","Strong"),
+                             "Bias" = c("Lib.","Neutral","Cons."),
+                             "Subject" = 101:114)
 yes_matrix <- aperm(yes_matrix, c(2,1,3))
 
 trial_matrix = t(as.matrix(delayed_counts_by_sub_bias[c('FA_N','W_N','S_N')]))
 dim(trial_matrix) <- c(3, 3, 14)
+dimnames(trial_matrix) <- list("Strength" = c("Lure","Weak","Strong"),
+                               "Bias" = c("Lib.","Neutral","Cons."),
+                               "Subject" = 101:114)
 trial_matrix <- aperm(trial_matrix, c(2,1,3))
 
 standata <- list(yeses = yes_matrix, trials = trial_matrix,
@@ -164,11 +170,11 @@ standata <- list(yeses = yes_matrix, trials = trial_matrix,
 
 fit <- stan(file = file.path(root_dir, "R","UVSD.stan"),
             data = standata,
-            pars = 'log_sigma',
-            include = FALSE,
-            iter = 2500,
-            chains = 1,
+            iter = 3000,
+            chains = 4,
             seed = 1235,
-            control = list(adapt_delta=.95, max_treedepth=20))
+            init_r = 1,
+            control = list(adapt_delta=.99)
+            )
 ```
 

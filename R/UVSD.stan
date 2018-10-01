@@ -5,33 +5,57 @@ data {
 }
 
 parameters {
-  vector[2] mu;
-  real log_sigma;
-  ordered[3] crit;
+  vector[2] mu_pop; // population d-primes
+  vector<lower=0>[2] mu_pop_SD; // variablility of population d-primes
+  
+  real log_sigma_pop; // evidence noise in pop.
+  real<lower=0> log_sigma_pop_SD; // variability of evidence noise in pop.
+  
+  ordered[3] crit_pop; //criterion locations in pop.
+  vector<lower=0>[3] crit_pop_SD; //variability of criterion locations in pop.
+  
+  matrix[Nsubs, 2] mu_sub;
+  vector[Nsubs] log_sigma_sub;
+  ordered[3] crit_sub[Nsubs];
 }
 
-transformed parameters {
-  real<lower=0> sigma;
-  sigma = exp(log_sigma);
-}
+// transformed parameters {
+//   vector<lower=0>[Nsubs] sigma_sub;
+//   sigma_sub = exp(log_sigma_sub);
+// }
 
 model {
-  vector[9] p; // Yes-rates, arranged first by category, then by bias level
-  p = rep_vector(0.0, 9);
+  vector[9] p[Nsubs]; // Yes-rates, arranged first by category, then by bias level
 
-  mu ~ normal(0, 3);
-  log_sigma ~ normal(0, 1);
-  crit ~ normal(0, 3);
+  // Population level priors
+  mu_pop ~ normal(0, 3); // prior for population d-primes
+  mu_pop_SD ~ normal(0, 3); // prior for variabilty in population d-primes
+  log_sigma_pop ~ normal(0, 3); // prior for population level varaibility of the evidence strength distributions
+  log_sigma_pop_SD ~ normal(0, 3); // prior for uncertainty in level varaibility of the evidence strength distributions
+  crit_pop ~ normal(0, 3); // prior for population level criterion placements
+  crit_pop_SD  ~ normal(0, 3); // prior for variability population level criterion placements
+  
+// aside: We have priors on both means and SD's here because we are stating the belief that the individual
+// subjects have parameters that are drawn from one population-level distribution, but we are somewhat uncertain
+// about the nature of that population level distribution. So, we put a prior on the population mean (a range of
+// likely values for the mean) and the population SD (a range of likely values for the SD), and allow the
+// individual subjects to have parameter values from this "uncertain" population level distribution.
+
 
   for (sub in 1:Nsubs) {
-    p[1:3] = 1 - Phi(crit); // False Alarm Rates
-    p[4:6] = 1 - Phi((crit-mu[1])/sigma); // Weak Hits Rates
-    p[7:9] = 1 - Phi((crit-mu[2])/sigma); // String Hit Rates
+
+    // Subject level priors
+    mu_sub[sub, 1:2] ~ normal(mu_pop, mu_pop_SD);
+    log_sigma_sub[sub] ~ normal(log_sigma_pop, mu_pop_SD);
+    crit_sub[sub, 1:3] ~ normal(crit_pop, crit_pop_SD);
     
-    yeses[1:, 1, sub] ~ binomial(trials[1:, 1, sub], p[1:3]);
-    yeses[1:, 2, sub] ~ binomial(trials[1:, 2, sub], p[4:6]);
-    yeses[1:, 3, sub] ~ binomial(trials[1:, 3, sub], p[7:9]);
+    p[sub, 1:3] = 1 - Phi(crit_sub[sub, 1:3]); // False Alarm Rates
+    p[sub, 4:6] = 1 - Phi((crit_sub[sub, 1:3] - mu_sub[sub, 1])/exp(log_sigma_sub[sub])); // Weak Hits Rates
+    p[sub, 7:9] = 1 - Phi((crit_sub[sub, 1:3] - mu_sub[sub, 2])/exp(log_sigma_sub[sub])); // String Hit Rates
+
+    yeses[1:, 1, sub] ~ binomial(trials[1:, 1, sub], p[sub, 1:3]);
+    yeses[1:, 2, sub] ~ binomial(trials[1:, 2, sub], p[sub, 4:6]);
+    yeses[1:, 3, sub] ~ binomial(trials[1:, 3, sub], p[sub, 7:9]);
   }
-  print("Criterion: ", crit)
-  print("Yeses: ", yeses[1:, 3, 14])
+
 }

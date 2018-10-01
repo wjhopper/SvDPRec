@@ -2,3 +2,5 @@ packrat/lib*/
 .Rproj.user
 *.html
 .Rhistory
+*.rds
+vignette/*_cache/
