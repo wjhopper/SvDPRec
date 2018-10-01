@@ -178,3 +178,44 @@ fit <- stan(file = file.path(root_dir, "R","UVSD.stan"),
             )
 ```
 
+```{r stan_model_disp, cache=TRUE, dependson="stan_model"}
+posterior <- as.data.frame(extract(fit))
+sub_level_params <- select(posterior, contains("_sub")) %>%
+  summarise_all(.funs = funs(mean, median)) %>%
+  gather("parameter","value") %>%
+  separate(parameter, into = c("parameter", "statistic"),
+         sep = "(?<=[0-9])_", fill = "right") %>%
+  separate(parameter, into = c("parameter","subject","which"),
+           sep = "\\.", fill = "right", convert = TRUE)
+
+subject_dprimes <- filter(sub_level_params, parameter=="mu_sub", statistic=="median") %>%
+  mutate(strength = ifelse(which==1,"Weak","Strong")) %>%
+  select(subject, strength, value) %>%
+  # unite(col = "strength", strength, statistic) %>%
+  spread(strength, value) %>%
+  select(subject, Weak, Strong)
+
+sub_sigma <- filter(sub_level_params, parameter=="log_sigma_sub", statistic=="median") %>%
+  select(subject, parameter, value) %>%
+  spread(parameter, value) %>%
+  rename(log_sigma = log_sigma_sub) %>%
+  mutate(sigma = exp(log_sigma)) %>%
+  select(-log_sigma)
+
+sub_crit <- filter(sub_level_params, parameter=="crit_sub", statistic=="median") %>%
+  select(subject, parameter, which, value) %>%
+  unite("parameter", parameter, which) %>%
+  spread(parameter, value) %>%
+  rename(crit1 = crit_sub_1, crit2 = crit_sub_2, crit3 = crit_sub_3)
+
+sub_param_means <- inner_join(subject_dprimes, sub_sigma, by = "subject") %>%
+  inner_join(sub_crit, by="subject")
+  
+  
+```
+
+```{r posterior_display}
+kable(sub_param_means, digits=3) %>%
+  kable_styling(full_width = FALSE)
+```
+
