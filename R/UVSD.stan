@@ -46,7 +46,7 @@ model {
 
     // Subject level priors
     mu_sub[sub, 1:2] ~ normal(mu_pop, mu_pop_SD);
-    log_sigma_sub[sub] ~ normal(log_sigma_pop, mu_pop_SD);
+    log_sigma_sub[sub] ~ normal(log_sigma_pop, log_sigma_pop_SD);
     crit_sub[sub, 1:3] ~ normal(crit_pop, crit_pop_SD);
     
     p[sub, 1:3] = 1 - Phi(crit_sub[sub, 1:3]); // False Alarm Rates

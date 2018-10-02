@@ -169,7 +169,7 @@ kable(matrix(MLE_param_means, ncol=6), digits=3, escape = FALSE,
 ```{stan stan_model_external, eval=FALSE, echo=TRUE, output.var='modelstring', code=readLines(file.path(root_dir, "R","UVSD.stan"))}
 ```
 
-```{r stan_model, cache=TRUE, cache.extra = tools::md5sum(file.path(root_dir, "R","UVSD.stan"))}
+```{r stan_model, cache=TRUE, results="hide", cache.extra = tools::md5sum(file.path(root_dir, "R","UVSD.stan"))}
 # Create an array suitable for passing into stan, so it can be turned into an array of matrices
 # The final produce should be 14 x 3 x 3, with subject along dim 1, bias level (conservative --> liberal) along dim 2,
 # and strength (lure, weak, strong) along dim 3.
