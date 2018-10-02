@@ -1,0 +1,36 @@
+model {
+	for (k in 1:length(res)) {
+		res[k] ~ dbern(p[k])
+		p[k] = 1 - pnorm( mu[subs[k]]/2 + (c[subs[k]] + lib[k]*bel[subs[k]] + cons[k]*bec[subs[k]]), 0+typ[k]*mu[subs[k]]+str[k]*se[subs[k]] , 1/exp(0 + typ[k]*lsig[subs[k]])^2 )  
+	}
+
+
+	for(j in 1:max(subs)){
+	  c[j] ~ dnorm(Mc, 1/SDc^2)
+	  mu[j] ~ dnorm(Mmu, 1/SDmu^2)
+	  se[j] ~ dnorm(Mse, 1/SDse^2)
+	  lsig[j] ~ dnorm(Mlsig, 1/SDlsig^2) #log of sigma for targets
+	  bel[j] ~ dnorm(Mbel, 1/SDbe^2)
+	  bec[j] ~ dnorm(Mbec, 1/SDbe^2)
+ 	}
+
+  
+  # Priors for mean and sd of group level criterions
+	Mc ~ dnorm(0, 1/3^2)
+	SDc ~ dunif(0,3)
+	
+	Mmu ~ dnorm(0, 1/3^2) # Prior for population d-prime in weak condition
+	SDmu ~ dunif(0,3) # Prior for variability of population d-prime in weak condition
+	
+	Mse ~ dnorm(0, 1/3^2) # Prior for increase in population d-prime with strengthening (se = strength effect)
+	SDse ~ dunif(0,3) # Prior for variabiity of increase in population d-prime with strengthening 
+	
+	# Priors for mean and sd of group-level target distribution noise
+	Mlsig ~ dnorm(0, 1/3^2)
+	SDlsig ~ dunif(0,3)
+	
+	Mbel ~ dnorm(0, 1/3^2) # Pop. mean of liberal bias effect (be=bias effect)
+	Mbec ~ dnorm(0, 1/3^2) # Pop. mean of conservative bias effect
+	
+	SDbe ~ dunif(0,3) # Bias Effect SD
+}

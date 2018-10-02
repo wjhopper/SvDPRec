@@ -18,6 +18,7 @@ library(kableExtra)
 library(optimx)
 library(foreach)
 library(rstan)
+library(tidybayes)
 rstan_options(auto_write = TRUE)
 options(mc.cores = parallel::detectCores())
 root_dir <- rprojroot::is_rstudio_project$find_file()
@@ -257,6 +258,53 @@ kable(hyper, digits=3, escape = FALSE,
       col.names = hyperparam_colnames) %>%
   kable_styling(full_width = FALSE, position = "left") %>%
   add_header_above(setNames(rep(2, 6), parameter_colnames),
+                   escape = FALSE)
+```
+
+### Jeff's JAGS Model
+```{r jags_model_source_code, comment=""}
+cat(readLines(file.path(root_dir, "R", "uv.bug")), sep="\n")
+```
+
+```{r jags_model_posterior}
+## loads mcmc.list object named 'UVSD_jags_posterior'
+load(file = file.path(root_dir, "data", "uvPosts.RData"))
+
+jags_posterior_subjects <- spread_draws(UVSD_jags_posterior, mu[subject], se[subject], lsig[subject],
+                                        bec[subject], c[subject], bel[subject]) %>%
+  mutate(strong = mu + se,
+         sigma = exp(lsig),
+         crit1 = (mu/2) + c + bec,
+         crit3 = (mu/2) + c + bel) %>%
+  select(.chain:subject, weak=mu, strong, sigma, crit1, crit2=c, crit3) %>%
+  mean_hdi()
+
+jags_posterior_hyper <- spread_draws(UVSD_jags_posterior, Mmu, SDmu, Mse, SDse, Mlsig, SDlsig,
+                                     Mbec, Mc, Mbel, SDc, SDbe) %>%
+  mutate(strong = Mmu + Mse,
+         sigma = exp(Mlsig),
+         SDsigma = exp(SDlsig),
+         crit1 = (Mmu/2) + Mc + Mbec,
+         crit3 = (Mmu/2) + Mc + Mbel) %>%
+  select(.chain:.draw, weak=Mmu, SDweak=SDmu, strong, SDstrong=SDse, sigma, SDsigma,
+         crit1, SDbe, crit2=Mc, SDc,crit3) %>%
+  mean_hdi()
+```
+
+```{r jags_posterior_display}
+kable(select(jags_posterior_subjects, -contains(".")),
+      digits=3, escape = FALSE,
+      caption = "Subject-level parameter means",
+      col.names = c("Subject", parameter_colnames)) %>%
+  kable_styling(full_width = FALSE, position = "left") 
+
+kable(select(jags_posterior_hyper, -contains(".")),
+      digits=3, escape = FALSE,
+      caption = "Hyperparameter means",
+      col.names = hyperparam_colnames[-length(hyperparam_colnames)]) %>%
+  kable_styling(full_width = FALSE, position = "left") %>%
+  add_header_above(c(setNames(rep(2, 5), parameter_colnames[1:(length(parameter_colnames)-1)]), 
+                     "C<sub>l</sub>"=1),
                    escape = FALSE)
 ```
 
