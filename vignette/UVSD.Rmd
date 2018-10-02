@@ -147,8 +147,6 @@ parameter_colnames <- c("d'<sub>W</sub>", "d'<sub>S</sub>", "\u03c3",
                         "C<sub>c</sub>", "C<sub>n</sub>", "C<sub>l</sub>")
 
 hyperparam_colnames <- rep(c("\u03BC", "\u03c3"), 6)
-hyperparam_colnames[5] <- "log-\u03BC"
-                                
 ```
 
 
@@ -171,7 +169,7 @@ kable(matrix(MLE_param_means, ncol=6), digits=3, escape = FALSE,
 ```{stan stan_model_external, eval=FALSE, echo=TRUE, output.var='modelstring', code=readLines(file.path(root_dir, "R","UVSD.stan"))}
 ```
 
-```{r stan_model, cache=TRUE}
+```{r stan_model, cache=TRUE, cache.extra = tools::md5sum(file.path(root_dir, "R","UVSD.stan"))}
 # Create an array suitable for passing into stan, so it can be turned into an array of matrices
 # The final produce should be 14 x 3 x 3, with subject along dim 1, bias level (conservative --> liberal) along dim 2,
 # and strength (lure, weak, strong) along dim 3.
@@ -243,7 +241,9 @@ sub_param_means <- inner_join(subject_dprimes, sub_sigma, by = "subject") %>%
 ## Hyper Parameters
 hyper <- select(posterior, contains("_pop")) %>%
   summarise_all(.funs = funs(mean)) %>%
-  select(mu_pop.1, mu_pop_SD.1, mu_pop.2, mu_pop_SD.2, log_sigma_pop, log_sigma_pop_SD,
+  mutate(sigma_pop = exp(log_sigma_pop),
+         sigma_pop_SD = exp(log_sigma_pop_SD)) %>%
+  select(mu_pop.1, mu_pop_SD.1, mu_pop.2, mu_pop_SD.2, sigma_pop, sigma_pop_SD,
          crit_pop.3, crit_pop_SD.3, crit_pop.2, crit_pop_SD.2, crit_pop.1, crit_pop_SD.1)
 ```
 
