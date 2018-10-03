@@ -19,6 +19,7 @@ library(optimx)
 library(foreach)
 library(rstan)
 library(tidybayes)
+library(ggplot2)
 rstan_options(auto_write = TRUE)
 options(mc.cores = parallel::detectCores())
 root_dir <- rprojroot::is_rstudio_project$find_file()
@@ -257,6 +258,26 @@ kable(hyper, digits=3, escape = FALSE,
   kable_styling(full_width = FALSE, position = "left") %>%
   add_header_above(setNames(rep(2, 6), parameter_colnames),
                    escape = FALSE)
+```
+
+```{r MLE_vs_bayes_point}
+ggplot(bind_rows(MLE = select(UVSD_fits, subject, Weak = d.W, Strong = d.S, sigma = s,
+                              crit_C = crit1, crit_N = crit2, crit_L = crit3) %>%
+                   mutate(subject = as.numeric(subject)),
+                 Bayes = rename(sub_param_means, crit_C = crit_sub_3,
+                                crit_N = crit_sub_2, crit_L = crit_sub_1) %>%
+                   mutate(subject = subject + 100),
+                 .id = "model") %>%
+         gather("param","value", -subject, -model) %>%
+         spread(model, value) %>%
+         mutate(param = factor(param, levels=c("Weak","Strong","sigma",
+                                               "crit_L", "crit_N","crit_C"),
+                               labels = c('d[W]','d[S]',"sigma",'C[L]','C[N]','C[C]'))
+                ),
+       aes(x=MLE, y=Bayes)) +
+  geom_point(size=2) +
+  geom_abline(slope = 1, intercept = 0) +
+  facet_wrap(~param, labeller = label_parsed)
 ```
 
 ### Jeff's JAGS Model
