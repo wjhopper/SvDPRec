@@ -19,10 +19,12 @@ parameters {
   ordered[3] crit_sub[Nsubs];
 }
 
-// transformed parameters {
-//   vector<lower=0>[Nsubs] sigma_sub;
-//   sigma_sub = exp(log_sigma_sub);
-// }
+transformed parameters {
+  vector<lower=0>[Nsubs] sigma_sub;
+  for (sub in 1:Nsubs) {
+    sigma_sub[sub] = exp(log_sigma_sub[sub]);
+  }
+}
 
 model {
   vector[9] p[Nsubs]; // Yes-rates, arranged first by category, then by bias level
@@ -50,8 +52,8 @@ model {
     crit_sub[sub, 1:3] ~ normal(crit_pop, crit_pop_SD);
     
     p[sub, 1:3] = 1 - Phi(crit_sub[sub, 1:3]); // False Alarm Rates
-    p[sub, 4:6] = 1 - Phi((crit_sub[sub, 1:3] - mu_sub[sub, 1])/exp(log_sigma_sub[sub])); // Weak Hits Rates
-    p[sub, 7:9] = 1 - Phi((crit_sub[sub, 1:3] - mu_sub[sub, 2])/exp(log_sigma_sub[sub])); // String Hit Rates
+    p[sub, 4:6] = 1 - Phi((crit_sub[sub, 1:3] - mu_sub[sub, 1])/sigma_sub[sub]); // Weak Hits Rates
+    p[sub, 7:9] = 1 - Phi((crit_sub[sub, 1:3] - mu_sub[sub, 2])/sigma_sub[sub]); // String Hit Rates
 
     yeses[1:, 1, sub] ~ binomial(trials[1:, 1, sub], p[sub, 1:3]);
     yeses[1:, 2, sub] ~ binomial(trials[1:, 2, sub], p[sub, 4:6]);
