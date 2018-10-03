@@ -216,21 +216,18 @@ sub_level_params <- select(posterior, contains("_sub")) %>%
   separate(parameter, into = c("parameter","subject","which"),
            sep = "\\.", fill = "right", convert = TRUE)
 
-subject_dprimes <- filter(sub_level_params, parameter=="mu_sub", statistic=="median") %>%
+subject_dprimes <- filter(sub_level_params, parameter=="mu_sub", statistic=="mean") %>%
   mutate(strength = ifelse(which==1,"Weak","Strong")) %>%
   select(subject, strength, value) %>%
-  # unite(col = "strength", strength, statistic) %>%
   spread(strength, value) %>%
   select(subject, Weak, Strong)
 
-sub_sigma <- filter(sub_level_params, parameter=="log_sigma_sub", statistic=="median") %>%
+sub_sigma <- filter(sub_level_params, parameter=="sigma_sub", statistic=="mean") %>%
   select(subject, parameter, value) %>%
   spread(parameter, value) %>%
-  rename(log_sigma = log_sigma_sub) %>%
-  mutate(sigma = exp(log_sigma)) %>%
-  select(-log_sigma)
+  rename(sigma = sigma_sub)
 
-sub_crit <- filter(sub_level_params, parameter=="crit_sub", statistic=="median") %>%
+sub_crit <- filter(sub_level_params, parameter=="crit_sub", statistic=="mean") %>%
   select(subject, parameter, which, value) %>%
   unite("parameter", parameter, which) %>%
   spread(parameter, value) %>%
