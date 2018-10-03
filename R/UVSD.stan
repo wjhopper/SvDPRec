@@ -15,14 +15,14 @@ parameters {
   vector<lower=0>[3] crit_pop_SD; //variability of criterion locations in pop.
   
   matrix[Nsubs, 2] mu_sub;
-  vector[Nsubs] log_sigma_sub;
+  vector[Nsubs] eta; // Gets transformed into the signal distribution noise parameter, sigma_sub.
   ordered[3] crit_sub[Nsubs];
 }
 
 transformed parameters {
   vector<lower=0>[Nsubs] sigma_sub;
   for (sub in 1:Nsubs) {
-    sigma_sub[sub] = exp(log_sigma_sub[sub]);
+    sigma_sub[sub] = exp(log_sigma_pop + log_sigma_pop_SD*eta[sub]);
   }
 }
 
@@ -48,7 +48,7 @@ model {
 
     // Subject level priors
     mu_sub[sub, 1:2] ~ normal(mu_pop, mu_pop_SD);
-    log_sigma_sub[sub] ~ normal(log_sigma_pop, log_sigma_pop_SD);
+    eta[sub] ~ normal(0, 1); // Gets transformed into the signal distribution noise parameter sigma_sub.
     crit_sub[sub, 1:3] ~ normal(crit_pop, crit_pop_SD);
     
     p[sub, 1:3] = 1 - Phi(crit_sub[sub, 1:3]); // False Alarm Rates

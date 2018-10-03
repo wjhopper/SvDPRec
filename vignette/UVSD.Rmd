@@ -86,7 +86,6 @@ fit_SDT <- function(theta, ...) {
 }
 ```
 
-
 ```{r cell_counts}
 delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
   select(-starts_with("speeded")) %>%
@@ -195,6 +194,8 @@ standata <- list(yeses = yes_matrix, trials = trial_matrix,
 
 fit <- stan(file = file.path(root_dir, "R","UVSD.stan"),
             data = standata,
+            pars = paste0("eta[", 1:standata$Nsubs, "]"),
+            include = FALSE,
             iter = 3000,
             chains = 4,
             seed = 1235,
