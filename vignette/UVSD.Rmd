@@ -275,8 +275,9 @@ jags_posterior_subjects <- spread_draws(UVSD_jags_posterior, mu[subject], se[sub
   mutate(strong = mu + se,
          sigma = exp(lsig),
          crit1 = (mu/2) + c + bec,
+         crit2 = (mu/2) + c,
          crit3 = (mu/2) + c + bel) %>%
-  select(.chain:subject, weak=mu, strong, sigma, crit1, crit2=c, crit3) %>%
+  select(.chain:subject, weak=mu, strong, sigma, crit1, crit2, crit3) %>%
   mean_hdi()
 
 jags_posterior_hyper <- spread_draws(UVSD_jags_posterior, Mmu, SDmu, Mse, SDse, Mlsig, SDlsig,
@@ -285,9 +286,10 @@ jags_posterior_hyper <- spread_draws(UVSD_jags_posterior, Mmu, SDmu, Mse, SDse, 
          sigma = exp(Mlsig),
          SDsigma = exp(SDlsig),
          crit1 = (Mmu/2) + Mc + Mbec,
+         crit2 = (Mmu/2) + Mc,
          crit3 = (Mmu/2) + Mc + Mbel) %>%
   select(.chain:.draw, weak=Mmu, SDweak=SDmu, strong, SDstrong=SDse, sigma, SDsigma,
-         crit1, SDbe, crit2=Mc, SDc,crit3) %>%
+         crit1, SDbe, crit2, SDc, crit3) %>%
   mean_hdi()
 ```
 
