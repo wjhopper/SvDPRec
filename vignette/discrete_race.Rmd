@@ -1,0 +1,82 @@
+---
+title: "Discrete Race Model Fits"
+author: "William Hopper"
+date: "`r format(Sys.Date(), '%b %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
+library(rprojroot)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(kableExtra)
+library(optimx)
+library(foreach)
+library(ggplot2)
+```
+
+```{r}
+## mu, sigma & nu should be vectors of length 2
+## First element should be parameter for detect distribution
+## Second element should be parameter for guess distribution
+
+## Weight is also vector of length
+## First element is probability of detection being available
+## Second element is probability of guessing correctly
+## These are independent probabilities, need not sum to 1
+dcRT <- function(x, mu, sigma, nu, weights) {
+  
+  pDetect <- weights[1]
+  pGuess_correct <- weights[2]
+  
+  p_detect_process_unfinished <- pexGAUS(x, mu[1], sigma[1], nu[1], lower.tail = FALSE)
+  p_guess_process_unfinished <- pexGAUS(x, mu[2], sigma[2], nu[2], lower.tail = FALSE)
+  
+  detect_RT_density <- dexGAUS(x, mu[1], sigma[1], nu[1])
+  guess_RT_density <- dexGAUS(x, mu[2], sigma[2], nu[2])
+  
+  
+  correct_RT_density <- 
+    # Detect RT's, weighted by probability you can detect and haven't given up & guessed yet
+    pDetect * p_guess_process_unfinished * detect_RT_density + 
+    # Guess RT's, weighted by probability you could detect but give up "early" and guess correctly
+    pDetect * p_detect_process_unfinished * pGuess_correct * guess_RT_density + 
+    # uess RT's, weighted by probability you can not detect but guess correctly
+    (1-pDetect) * pGuess_correct * guess_RT_density
+  
+  return(correct_RT_density)
+}
+
+## mu, sigma & nu should be vectors of length 2
+## Nu is mean of exponential process (also denoted as tao sometimes)
+## First element should be parameter for detect distribution
+## Second element should be parameter for guess distribution
+
+## Weight is also vector of length
+## First element is probability of detection being available
+## Second element is probability of guessing *incorrectly*
+## These are independent probabilities, need not sum to 1
+
+deRT <- function(x, mu, sigma, nu, weights) {
+  ## mu, sigma & nu should be vectors of length 2
+  pDetect <- weights[1]
+  pGuess_incorrect <- weights[2]
+  
+  p_detect_process_unfinished <- pexGAUS(x, mu[1], sigma[1], nu[1], lower.tail = FALSE)
+  guess_RT_density <- dexGAUS(x, mu[2], sigma[2], nu[2])
+  
+  incorrect_RT_density <- # sum of:
+    # Guess RT's, weighted by probability you could detect but give up "early" and guess incorrectly 
+    pDetect * p_detect_process_unfinished * (pGuess_incorrect) * guess_RT_density +
+    # Guess RT's, weighted by probability detection is not availble and you guess incorrectly
+    (1-pDetect) * (pGuess_incorrect) * guess_RT_density
+  
+  return(incorrect_RT_density)
+  }
+```
+
