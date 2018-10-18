@@ -10,17 +10,18 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
+# library(gamlss)
 library(rprojroot)
-library(dplyr)
-library(tidyr)
-library(ggplot2)
 library(kableExtra)
 library(optimx)
 library(foreach)
+library(dplyr)
+library(tidyr)
 library(ggplot2)
+root_dir <- rprojroot::is_rstudio_project$find_file()
 ```
 
-```{r}
+```{r discrete_race_exgaussians}
 ## mu, sigma & nu should be vectors of length 2
 ## First element should be parameter for detect distribution
 ## Second element should be parameter for guess distribution
@@ -34,11 +35,11 @@ dcRT <- function(x, mu, sigma, nu, weights) {
   pDetect <- weights[1]
   pGuess_correct <- weights[2]
   
-  p_detect_process_unfinished <- pexGAUS(x, mu[1], sigma[1], nu[1], lower.tail = FALSE)
-  p_guess_process_unfinished <- pexGAUS(x, mu[2], sigma[2], nu[2], lower.tail = FALSE)
+  p_detect_process_unfinished <- gamlss.dist::pexGAUS(x, mu[1], sigma[1], nu[1], lower.tail = FALSE)
+  p_guess_process_unfinished <- gamlss.dist::pexGAUS(x, mu[2], sigma[2], nu[2], lower.tail = FALSE)
   
-  detect_RT_density <- dexGAUS(x, mu[1], sigma[1], nu[1])
-  guess_RT_density <- dexGAUS(x, mu[2], sigma[2], nu[2])
+  detect_RT_density <- gamlss.dist::dexGAUS(x, mu[1], sigma[1], nu[1])
+  guess_RT_density <- gamlss.dist::dexGAUS(x, mu[2], sigma[2], nu[2])
   
   
   correct_RT_density <- 
@@ -67,8 +68,8 @@ deRT <- function(x, mu, sigma, nu, weights) {
   pDetect <- weights[1]
   pGuess_incorrect <- weights[2]
   
-  p_detect_process_unfinished <- pexGAUS(x, mu[1], sigma[1], nu[1], lower.tail = FALSE)
-  guess_RT_density <- dexGAUS(x, mu[2], sigma[2], nu[2])
+  p_detect_process_unfinished <- gamlss.dist::pexGAUS(x, mu[1], sigma[1], nu[1], lower.tail = FALSE)
+  guess_RT_density <- gamlss.dist::dexGAUS(x, mu[2], sigma[2], nu[2])
   
   incorrect_RT_density <- # sum of:
     # Guess RT's, weighted by probability you could detect but give up "early" and guess incorrectly 
@@ -78,5 +79,93 @@ deRT <- function(x, mu, sigma, nu, weights) {
   
   return(incorrect_RT_density)
   }
+```
+
+```{r discrete_race_objective_functions}
+
+DR_llik <- function(){}
+
+# A small wrapper around the log-likelihood function
+DR_obj <- function(parameters, data){
+
+  data$predicted_p <- numeric(nrow(data))
+
+  for (strength in unique(data$strength)) {
+
+    if (strength == "L") {
+      detect_correctly <- parameters['dNew.L']
+      guess_correctly <- 1 - parameters['gOld']
+    } else {
+      detect_correctly <- parameters[paste0('dOld.', strength)]
+      guess_correctly <- parameters['gOld']
+    }
+
+    for (acc in unique(data$speeded_correct)) {
+
+      if (acc) {
+        density_fn = dcRT
+      } else {
+        density_fn = deRT
+      }
+
+      index_vector <- data$strength==strength & data$speeded_correct == acc 
+      cutpoints <- c(0, data$value[index_vector], Inf)
+
+      p <- numeric(length(cutpoints)-1)
+      for (bin_number in 1:length(p)) {
+
+        x <- integrate(density_fn, cutpoints[bin_number], cutpoints[bin_number+1],
+                       mu = parameters[c("mu.d","mu.g")],
+                       sigma = parameters[c("sigma","sigma")],
+                       nu = parameters[c("nu","nu")],
+                       weights = c(detect_correctly, guess_correctly)
+                       )
+        p[bin_number] <- x$value
+      }
+
+      data$predicted_p[index_vector] <- p
+    }
+  }
+
+}
+```
+
+```{r load_data}
+load(file.path(root_dir, "data", "SvDPRec.Rdata"))
+test <- select(test, -list)
+```
+
+
+```{r observed_RT_choice_data}
+speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
+  mutate(speeded_RT = speeded_RT/1000) %>%
+  group_by(subject, strength, speeded_correct) %>%
+  summarise(quintiles = list(
+              data.frame(quantile = c("10%", "30%", "50%", "70%", "90%"),
+                         value = quantile(speeded_RT, c(.1, .3, .5, .7, .9)),
+                         bin_counts = n() * c(.1, .2, .2, .2, .1)
+                         )
+              )) %>%
+  ungroup() %>%
+  unnest()
+```
+
+```{r fit}
+DR_fits <- foreach(sub = split(speeded_RT_choice_quantiles,
+                               speeded_RT_choice_quantiles$subject)
+                   ) %do% {
+  fit <- optimx(par = c("dNew.L" = .25, "dOld.W" = .5, "dOld.S"=.75, "gOld"=.5,
+                        "mu.d" = .5, "sigma" = .5, "nu" = .25,
+                        "mu.g" = .75),
+                fn = DR_obj,
+                method = "nlminb",
+                itnmax = 3000,
+                lower = c(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                upper = c(1, 1, 1, 1, 3, 1, 3, 3, 1, 3),
+                control = list(kkt=FALSE),
+                data = sub)
+  }
+  
+  
 ```
 
