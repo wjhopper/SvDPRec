@@ -1,0 +1,182 @@
+---
+title: "2HT Modeling"
+author: "William Hopper"
+date: "`r format(Sys.Date(), '%b %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
+library(rprojroot)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(kableExtra)
+library(optimx)
+library(foreach)
+library(rstan)
+library(tidybayes)
+library(ggplot2)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+root_dir <- rprojroot::is_rstudio_project$find_file()
+```
+
+```{r load_data}
+load(file.path(root_dir, "data","SvDPRec.Rdata"))
+test <- select(test, -list)
+```
+
+```{r cell_counts}
+delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
+  select(-starts_with("speeded")) %>%
+  rename(correct = delayed_correct) %>%
+  count(subject, strength, pOld, correct) %>%
+  complete(subject, strength, pOld, correct,
+           fill = list(n=0)) %>%
+  unite(col = "resp_type", strength, correct) %>%
+  spread(resp_type, n) %>%
+  rename(FA = L_FALSE, CR = L_TRUE,
+         M_S = S_FALSE, H_S = S_TRUE,
+         M_W = W_FALSE, H_W = W_TRUE) %>%
+  mutate(L_N = FA + CR,
+         S_N = M_S + H_S,
+         W_N = M_W + H_W) %>%
+  select(subject, pOld, FA, L_N, H_S, S_N, H_W, W_N)
+
+```
+
+## Hierarchical Bayesian Estimation
+### Will's Stan Model
+```{stan stan_model_external, eval=FALSE, echo=TRUE, output.var='modelstring', code=readLines(file.path(root_dir, "R","2HT.stan"))}
+```
+
+```{r stan_model, cache=TRUE, results="hide", cache.extra = tools::md5sum(file.path(root_dir, "R","2HT.stan"))}
+# Create an array suitable for passing into stan, so it can be turned into an array of matrices
+# The final produce should be 14 x 3 x 3, with subject along dim 1, bias level (conservative --> liberal) along dim 2,
+# and strength (lure, weak, strong) along dim 3.
+delayed_counts_by_sub_bias <- arrange(delayed_counts_by_sub_bias, subject, desc(pOld)) %>%
+  mutate(CR = L_N - FA,
+         H_S = replace(H_S, H_S == S_N, H_S[H_S == S_N]-1)) %>%
+  select(subject, pOld, CR, L_N, H_S, S_N, H_W, W_N)
+
+corrects_matrix = t(as.matrix(delayed_counts_by_sub_bias[c('CR','H_W','H_S')]))
+dim(corrects_matrix) <- c(3, 3, 14)
+dimnames(corrects_matrix) <- list("Strength" = c("Lure","Weak","Strong"),
+                             "Bias" = c("Lib.","Neutral","Cons."),
+                             "Subject" = 101:114)
+corrects_matrix <- aperm(corrects_matrix, c(2,1,3))
+
+trial_matrix = t(as.matrix(delayed_counts_by_sub_bias[c('L_N','W_N','S_N')]))
+dim(trial_matrix) <- c(3, 3, 14)
+dimnames(trial_matrix) <- list("Strength" = c("Lure","Weak","Strong"),
+                               "Bias" = c("Lib.","Neutral","Cons."),
+                               "Subject" = 101:114)
+trial_matrix <- aperm(trial_matrix, c(2,1,3))
+
+standata <- list(corrects = corrects_matrix, trials = trial_matrix,
+                 Nsubs = length(unique(delayed_counts_by_sub_bias$subject)))
+
+fit <- stan(file = file.path(root_dir, "R","2HT.stan"),
+            data = standata,
+            iter = 3000,
+            chains = 4,
+            seed = 1235,
+            init_r = 1,
+            control = list(adapt_delta=.99, max_treedepth=15)
+            )
+fit <- recover_types(fit)
+```
+
+```{r parameter_summaries}
+subject_params <- spread_draws(fit, `GO_.*`[subject], `D.*`[subject], regex=TRUE) %>%
+  ungroup() %>%
+  mutate(subject = as.character(subject + 100)) %>%
+  group_by(subject)
+
+subject_param_summaries <- mean_hdi(subject_params)
+  
+pop_params <- spread_draws(fit, `beta_.*`[parameter_index], regex=TRUE)
+```
+
+```{r point_predictions}
+X <- select(subject_param_summaries, subject, DN, DO_W, DO_S) %>%
+  gather("strength","detect_prob", -subject) %>%
+  mutate(strength = recode(strength, DN = "L", DO_W = "W", DO_S = "S"))
+
+Y <- select(subject_param_summaries, subject, GO_Lib, GO_Neut, GO_Cons) %>%
+  gather("pOld","guess_old_prob", -subject) %>%
+  mutate(pOld = recode(pOld, GO_Lib = "75%", GO_Neut = "50%", GO_Cons = "25%"))
+
+pred_accuracy <- full_join(X, Y, by="subject") %>%
+  select(subject, strength, pOld, detect_prob, guess_old_prob) %>%
+  arrange(subject,strength, pOld) %>%
+  mutate(guess_correct_prob = ifelse(strength=="L", 1-guess_old_prob, guess_old_prob),
+         pCorrect = detect_prob + (1-detect_prob)*(guess_correct_prob)) %>%
+  select(-guess_old_prob)
+
+```
+
+```{r ROC_data}
+pred_ROC_data <- select(pred_accuracy, -detect_prob, -guess_correct_prob) %>%
+  spread(strength, pCorrect) %>%
+  mutate(FAR = 1-L) %>%
+  select(subject, pOld, FAR, HR_W = W, HR_S = S)
+  
+obs_ROC_data <- mutate(delayed_counts_by_sub_bias,
+                       FAR = (L_N - CR)/L_N,
+                       HR_W = H_W/W_N,
+                       HR_S = H_S/S_N,
+                       pOld = sprintf("%2.0f%%", pOld*100)) %>%
+  select(subject, pOld, FAR, HR_W, HR_S)
+
+ROC_data <- bind_rows(pred = pred_ROC_data, obs = obs_ROC_data, .id = "type") %>%
+  arrange(subject, pOld, type) %>%
+  select(subject, pOld, type, FAR, HR_W, HR_S)
+
+ROC_data <- bind_rows(select(ROC_data, -HR_S) %>%
+                        mutate(strength = "W") %>%
+                        rename(HR = HR_W),
+                      select(ROC_data, -HR_W) %>%
+                        mutate(strength = "S") %>%
+                        rename(HR = HR_S)
+                      ) %>%
+  select(subject, strength, pOld, type, FAR, HR)
+```
+
+```{r ROC_plot, results="asis"}
+for (s in unique(ROC_data$subject)) {
+  
+  cat(sprintf("<h3>Subject %s</h3>", s))
+  
+  filter(subject_param_summaries, subject == s) %>%
+    select(-.width, -.interval, -.point) %>%
+    gather("param", "value", -subject) %>%
+    separate(param, into = c("param","stat"), sep = "\\.",
+             fill="right") %>%
+    spread(stat, value) %>%
+    select(param, mean = `<NA>`, lower, upper) %>%
+    knitr::kable(digits=3,
+                 type="html",
+                 col.names = c("Parameter", "Posterior Mean", "HDI Lower", "HDI Upper")) %>%
+    kable_styling(full_width = FALSE) %>%
+    column_spec(1, bold=TRUE) %>%
+    print()
+  
+    ROC <- ggplot(filter(ROC_data, subject == s),
+                  aes(x=FAR, y=HR, linetype=type, shape=pOld)) +
+      geom_point(size=2) +
+      geom_line(aes(group=type), size=.8) +
+      facet_grid(~strength) +
+      scale_x_continuous(limits = c(0, 1)) +
+      scale_y_continuous(limits = c(0, 1)) +
+      coord_equal()
+    print(ROC)
+}
+```
+

@@ -1,6 +1,8 @@
-packrat/lib*/
+.Rdata
 .Rproj.user
-*.html
 .Rhistory
-*.rds
+packrat/lib*/
 vignette/*_cache/
+vignette/*_files
+*.html
+*.rds
