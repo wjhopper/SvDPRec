@@ -247,6 +247,22 @@ Version: 1.4.4
 Hash: 4df5ab2c8c35382dacab75d414da6748
 Requires: iterators
 
+Package: gamlss
+Source: CRAN
+Version: 5.1-2
+Hash: c6285ff7bbc4ef7508895ddd6bb9f150
+Requires: gamlss.data, gamlss.dist
+
+Package: gamlss.data
+Source: CRAN
+Version: 5.1-0
+Hash: 4794a1b02fe8c8c1fd9c612e23972804
+
+Package: gamlss.dist
+Source: CRAN
+Version: 5.1-0
+Hash: 72af60afa2f31d1fdb65a14fce043611
+
 Package: ggplot2
 Source: CRAN
 Version: 3.0.0
