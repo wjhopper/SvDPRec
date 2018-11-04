@@ -16,9 +16,11 @@ library(rprojroot)
 library(kableExtra)
 library(optimx)
 library(foreach)
+library(rtdists)
 library(ggplot2)
 library(dplyr)
 library(tidyr)
+
 root_dir <- rprojroot::is_rstudio_project$find_file()
 ```
 
@@ -64,15 +66,14 @@ diffusion_obj <- function(parameters, data, fixed=NULL, scale=FALSE){
                                                    size = sum(bin_counts),
                                                    prob = p/sum(p),
                                                    log = TRUE)
+      if (is.infinite(log_likelihood)) {
+        return(.Machine$double.xmax)
+      }
     }
   }
-  
-  if (is.infinite(log_likelihood)) {
-    return(.Machine$double.xmax)
-  } else {
-    return(-log_likelihood)
-  }
-  
+
+  return(-log_likelihood)
+
 }
 ```
 
@@ -88,11 +89,16 @@ speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
   summarise(quintiles = list(
               data.frame(quantile = c("10%", "30%", "50%", "70%", "90%", "100%"),
                          value = quantile(speeded_RT, c(.1, .3, .5, .7, .9, 1)),
-                         bin_counts = floor(n() * c(.1, .2, .2, .2, .2, .1))
-                         )
+                         bin_counts = floor(n() * c(.1, .2, .2, .2, .2, .1)),
+                         stringsAsFactors = FALSE)
               )) %>%
   ungroup() %>%
   unnest()
+
+speeded_RT_acc <- filter(test, !is.na(type)) %>%
+  mutate(speeded_RT = speeded_RT/1000) %>%
+  group_by(subject, strength) %>%
+  summarise(acc = mean(speeded_correct))
 ```
 
 ```{r fit, cache=TRUE, dependson=c("diffusion_functions")}
@@ -128,4 +134,131 @@ diffusion_fits <- foreach(sub = split(speeded_RT_choice_quantiles, speeded_RT_ch
     fit
   }
 
+```
+
+```{r tidy_parameters}
+diffusion_fits <- bind_rows(diffusion_fits)
+
+V <- select(diffusion_fits, subject, v.L, v.W, v.S) %>%
+  gather("parameter","value", -subject) %>%
+  mutate(strength = sub("v.", "", parameter, fixed=TRUE)) %>%
+  select(subject, strength, v = value)
+
+SV <- select(diffusion_fits, subject, sv.L, sv.T) %>%
+  rename(sv.W = sv.T) %>%
+  mutate(sv.S = sv.W) %>%
+  gather("parameter","value", -subject) %>%
+  mutate(strength = sub("sv.", "", parameter, fixed=TRUE)) %>%
+  select(subject, strength, sv = value)
+
+tidy_params <- select(diffusion_fits, subject, a, z, t0, st0) %>%
+  left_join(x = distinct(speeded_RT_choice_quantiles, subject, strength),
+            y = .,
+            by = "subject") %>%
+  left_join(y = V,
+            by = c("subject","strength")) %>%
+  left_join(y = SV,
+            by = c("subject","strength"))
+```
+
+```{r predictions}
+pred_acc <- rowwise(tidy_params) %>%
+  mutate(acc = pdiffusion(rt = Inf, response = 2,
+                          a = a, z = z*a, t0 = t0, st0 = st0,
+                          v = v, sv = sv)
+         )
+accuracy <- bind_rows(predicted = select(pred_acc, subject, strength, acc),
+                      observed = speeded_RT_acc,
+                      .id = 'type')
+
+pred_RT_quantiles <- rowwise(tidy_params) %>%
+  mutate(RT = list(as.data.frame(matrix(
+                qdiffusion(p = rep(c(.1, .3, .5, .7, .9), 2),
+                           response = rep(1:2, each = 5),
+                           a = a, z = z*a, t0 = t0, st0 = st0,
+                           v = v, sv = sv,
+                           scale_p = TRUE),
+                nrow=2, ncol=5,
+                byrow=TRUE,
+                dimnames = list(c("Incorrect","Correct"),
+                                quantile = c("10%","30%", "50%", "70%", "90%"))
+                )))
+         ) %>%
+  unnest() %>% 
+  mutate(speeded_correct = rep(c(FALSE, TRUE), nrow(.)/2)) %>%
+  select(subject, strength, speeded_correct, `10%`, `30%`, `50%`, `70%`, `90%`) %>%
+  gather('quantile', 'value', `10%`, `30%`, `50%`, `70%`, `90%`)
+
+RT_quantiles <- bind_rows(predicted = pred_RT_quantiles,
+                          observed = select(filter(speeded_RT_choice_quantiles,
+                                                   quantile != "100%"),
+                                            -bin_counts),
+                          .id = 'type')
+```
+
+```{r plots, fig.width=9, fig.align="center", results="asis"}
+
+# formatted_names <- c("Model",
+#                      "D<sub>L</sub>", "D<sub>W</sub>", "D<sub>S</sub>", "G<sub>old</sub>",
+#                      "\u03BC<sub>D</sub>", "\u03BC<sub>G</sub>", "&sigma;", "τ",
+#                      "-LL", "G<sup>2</sup>", "p(X<sup>2</sup><sub>28</sub>)")
+
+for (s in unique(speeded_RT_choice_quantiles$subject)) {
+  
+  cat(sprintf("<h3>Subject %s</h3>", s))
+  
+  subject_params <- filter(diffusion_fits, subject == s)
+  kable(select(subject_params, v.L, v.W, v.S, sv.L, sv.T, a, z, t0, st0, value, convcode),
+        digits = 3,
+        # col.names = formatted_names,
+        #escape = FALSE
+        ) %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    print()
+
+  acc_plot <-
+    ggplot(filter(accuracy, subject == s),
+          aes(x=strength, y=acc, shape=type, color=strength)) +
+    geom_point(size=2,stroke=2) +
+    scale_shape_manual("",
+                       values = c(16,4),
+                       breaks = c("observed","predicted")
+                       ) +
+    scale_color_discrete(labels = c("L" = "Lure",
+                                    "W" = "Weak\nTarget",
+                                    "S" = "Strong\nTarget")
+                         ) +
+    scale_y_continuous("Percent Correct", limits = c(0, 1)) +
+    scale_x_discrete(labels = c("L" = "Lure",
+                                "W" = "Weak\nTarget",
+                                "S" = "Strong\nTarget"),
+                     expand = c(0, .2)) +
+    theme(legend.key.height = unit(9, 'mm'))
+  
+  quantile_plot <- 
+    ggplot(filter(RT_quantiles, subject == s),
+           aes(x=quantile, y=value, shape=type, color=strength)) +
+    geom_point(size=1.5) +
+    geom_line(aes(group=type)) +
+    facet_grid(speeded_correct ~ strength,
+               labeller = labeller(speeded_correct = as_labeller(
+                                    c("TRUE" = "Correct",
+                                      "FALSE" = "Error")
+                                    ),
+                                    strength = as_labeller(
+                                      c("L" = "Lure",
+                                        "S" = "Strong Target",
+                                        "W" = "Weak Target")
+                                    )
+                                   )
+               ) +
+    scale_shape_manual(values=c(16,4),
+                   breaks=c("observed","predicted")
+                   ) +
+    scale_y_continuous("RT Quantile Value (s.)") +
+    guides(color=FALSE, shape=FALSE)
+  
+  gridExtra::grid.arrange(acc_plot, quantile_plot, nrow=1,
+                          widths=c(.35, .65))
+}
 ```
