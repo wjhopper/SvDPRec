@@ -1,5 +1,5 @@
 ---
-title: "2HT Modeling"
+title: "Diffusion Modeling"
 author: "William Hopper"
 date: "`r format(Sys.Date(), '%b %d, %Y')`"
 output:
@@ -46,13 +46,13 @@ diffusion_obj <- function(parameters, data, fixed=NULL, scale=FALSE){
       sv = parameters["sv.T"]
     }
 
-    for (acc in unique(data$speeded_correct)) {
+    for (b in unique(data$boundary)) {
 
-      i <- data$strength==strength & data$speeded_correct == acc 
+      i <- data$strength==strength & data$boundary == b
       cutpoints <- c(0, data$value[i])
       cutpoints[length(cutpoints)] <- Inf
 
-      p <- pdiffusion(rt = cutpoints, response = acc,
+      p <- pdiffusion(rt = cutpoints, response = b,
                       a = parameters["a"],
                       z = parameters["a"] * parameters["z"],
                       t0 = parameters["t0"],
@@ -67,7 +67,7 @@ diffusion_obj <- function(parameters, data, fixed=NULL, scale=FALSE){
                                                    prob = p/sum(p),
                                                    log = TRUE)
       if (is.infinite(log_likelihood)) {
-        return(.Machine$double.xmax)
+        return(1e9)
       }
     }
   }
@@ -85,7 +85,7 @@ test <- select(test, -list)
 ```{r observed_RT_choice_data}
 speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
   mutate(speeded_RT = speeded_RT/1000) %>%
-  group_by(subject, strength, speeded_correct) %>%
+  group_by(subject, strength, speeded_judgment) %>%
   summarise(quintiles = list(
               data.frame(quantile = c("10%", "30%", "50%", "70%", "90%", "100%"),
                          value = quantile(speeded_RT, c(.1, .3, .5, .7, .9, 1)),
@@ -95,8 +95,7 @@ speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
   ungroup() %>%
   unnest()
 
-speeded_RT_acc <- filter(test, !is.na(type)) %>%
-  mutate(speeded_RT = speeded_RT/1000) %>%
+speeded_acc <- filter(test, !is.na(type)) %>%
   group_by(subject, strength) %>%
   summarise(acc = mean(speeded_correct))
 ```
@@ -118,15 +117,19 @@ diffusion_fits <- foreach(sub = split(speeded_RT_choice_quantiles, speeded_RT_ch
 
     # Make incorrects the lower boundary responses (1) and corrects the upper boundary responses( 2)
     # This will be useful inside the objective function
-    sub$speeded_correct <- sub$speeded_correct + 1
+    sub$boundary <- as.numeric(factor(sub$speeded_judgment,
+                                      levels = c('n','o'),
+                                      labels = c("lower",'upper')
+                                      )
+                               )
     fit <- optimx(par = c("a"= 1, "z"=.5, "t0"=.25, "st0"=.1,
-                          "v.L"=.5, "v.W"=.5, "v.S"=1,
+                          "v.L"=0, "v.W"=.5, "v.S"=1,
                           "sv.L"=.5, "sv.T" = .75
                           ),
                   fn = diffusion_obj,
-                  method = c("nlminb"), 
+                  method = c("L-BFGS-B"), 
                   itnmax = 3000,
-                  lower = c(.001, .001, .001,  .001, -Inf, -Inf, -Inf, .001, .001),
+                  lower = c(.001, .001, .001,  .001, -Inf, -Inf, -Inf, .1, .1),
                   upper = c(Inf,    1,   Inf,   Inf,   Inf,  Inf,  Inf, Inf,  Inf),
                   control = list(kkt=FALSE, follow.on=TRUE),
                   data = sub)
@@ -163,12 +166,12 @@ tidy_params <- select(diffusion_fits, subject, a, z, t0, st0) %>%
 
 ```{r predictions}
 pred_acc <- rowwise(tidy_params) %>%
-  mutate(acc = pdiffusion(rt = Inf, response = 2,
-                          a = a, z = z*a, t0 = t0, st0 = st0,
-                          v = v, sv = sv)
-         )
+  mutate(pOld = pdiffusion(rt = Inf, response = 2,
+                           a = a, z = z*a, t0 = t0, st0 = st0,
+                           v = v, sv = sv),
+         acc = replace(pOld, strength == "L", 1 - pOld[strength == "L"]))
 accuracy <- bind_rows(predicted = select(pred_acc, subject, strength, acc),
-                      observed = speeded_RT_acc,
+                      observed = speeded_acc,
                       .id = 'type')
 
 pred_RT_quantiles <- rowwise(tidy_params) %>%
@@ -185,33 +188,43 @@ pred_RT_quantiles <- rowwise(tidy_params) %>%
                 )))
          ) %>%
   unnest() %>% 
-  mutate(speeded_correct = rep(c(FALSE, TRUE), nrow(.)/2)) %>%
-  select(subject, strength, speeded_correct, `10%`, `30%`, `50%`, `70%`, `90%`) %>%
+  mutate(speeded_judgment = rep(c('n', 'o'), nrow(.)/2)) %>%
+  select(subject, strength, speeded_judgment, `10%`, `30%`, `50%`, `70%`, `90%`) %>%
   gather('quantile', 'value', `10%`, `30%`, `50%`, `70%`, `90%`)
 
 RT_quantiles <- bind_rows(predicted = pred_RT_quantiles,
                           observed = select(filter(speeded_RT_choice_quantiles,
                                                    quantile != "100%"),
                                             -bin_counts),
-                          .id = 'type')
+                          .id = 'type') %>%
+  mutate(speeded_correct = ifelse((strength == "L" & speeded_judgment == "n") |
+                                    strength %in% c("S", "W") & speeded_judgment == "o",
+                                  TRUE,
+                                  FALSE)
+         )
 ```
 
 ```{r plots, fig.width=9, fig.align="center", results="asis"}
 
-# formatted_names <- c("Model",
-#                      "D<sub>L</sub>", "D<sub>W</sub>", "D<sub>S</sub>", "G<sub>old</sub>",
-#                      "\u03BC<sub>D</sub>", "\u03BC<sub>G</sub>", "&sigma;", "τ",
-#                      "-LL", "G<sup>2</sup>", "p(X<sup>2</sup><sub>28</sub>)")
+formatted_names <- c(
+                     "V<sub>L</sub>", "V<sub>W</sub>", "V<sub>S</sub>",
+                     "S<sub>vL</sub>", "S<sub>vT</sub>",
+                     "a", "z", "t<sub>0</sub>", "s<sub>t0</sub>",
+                     "-LL", "Conv. Code")
 
 for (s in unique(speeded_RT_choice_quantiles$subject)) {
   
   cat(sprintf("<h3>Subject %s</h3>", s))
   
   subject_params <- filter(diffusion_fits, subject == s)
+  if (subject_params$value == .Machine$double.xmax) {
+    subject_params$value <- Inf
+  } 
+  
   kable(select(subject_params, v.L, v.W, v.S, sv.L, sv.T, a, z, t0, st0, value, convcode),
         digits = 3,
-        # col.names = formatted_names,
-        #escape = FALSE
+        col.names = formatted_names,
+        escape = FALSE
         ) %>%
     kableExtra::kable_styling(full_width = FALSE) %>%
     print()
