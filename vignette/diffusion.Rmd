@@ -36,9 +36,14 @@ diffusion_obj <- function(parameters, data, fixed=NULL, scale=FALSE){
   }
   log_likelihood <- 0
 
-  for (strength in unique(data$strength)) {
+  all_strengths <- unique(data$strength) # Conditions to loop over
+  boundaries <- 1:2 # Boundaries to loop over
+  
+  for (strength in all_strengths) {
 
     condition_index <- data$strength==strength
+    bin_counts <- data$bin_counts[condition_index]
+    p <- numeric(sum(condition_index))
     
     if (strength == "L") {
       sv = parameters["sv.L"]
@@ -46,29 +51,38 @@ diffusion_obj <- function(parameters, data, fixed=NULL, scale=FALSE){
       sv = parameters["sv.T"]
     }
 
-    for (b in unique(data$boundary)) {
+    insert_at = 0
+    for (b in boundaries) {
 
-      i <- data$strength==strength & data$boundary == b
-      cutpoints <- c(0, data$value[i])
+      i <- condition_index & data$boundary == b
+      cutpoints <- data$value[i]
       cutpoints[length(cutpoints)] <- Inf
 
-      p <- pdiffusion(rt = cutpoints, response = b,
-                      a = parameters["a"],
-                      z = parameters["a"] * parameters["z"],
-                      t0 = parameters["t0"],
-                      st0 = parameters["st0"],
-                      v = parameters[paste0("v.", strength)],
-                      sv = sv)
-      p <- diff(p)
-      p[p<0] <- 0
-      bin_counts <- data$bin_counts[i]
-      log_likelihood <- log_likelihood + dmultinom(x = bin_counts,
-                                                   size = sum(bin_counts),
-                                                   prob = p/sum(p),
-                                                   log = TRUE)
-      if (is.infinite(log_likelihood)) {
-        return(1e9)
+      p_b <- pdiffusion(rt = cutpoints, response = b,
+                        a = parameters["a"],
+                        z = parameters["a"] * parameters["z"],
+                        t0 = parameters["t0"],
+                        st0 = parameters["st0"],
+                        v = parameters[paste0("v.", strength)],
+                        sv = sv)
+
+      p_b <- c(p_b[1], diff(p_b))
+      less <- p_b <= 0
+      if (any(less)) {
+        p_b[less] <- 0.0001
+        p_b <- p_b/sum(p_b)
       }
+
+      p[(insert_at+1):(insert_at+length(p_b))] <- p_b
+      insert_at <- insert_at + length(p_b)
+    }
+
+    log_likelihood <- log_likelihood + dmultinom(x = bin_counts,
+                                                 size = sum(bin_counts),
+                                                 prob = p,
+                                                 log = TRUE)
+    if (is.infinite(log_likelihood)) {
+      return(1e9)
     }
   }
 
@@ -84,6 +98,7 @@ test <- select(test, -list)
 
 ```{r observed_RT_choice_data}
 speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
+  filter(speeded_RT > 200) %>%
   mutate(speeded_RT = speeded_RT/1000) %>%
   group_by(subject, strength, speeded_judgment) %>%
   summarise(quintiles = list(
