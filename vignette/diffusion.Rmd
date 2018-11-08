@@ -28,6 +28,9 @@ root_dir <- rprojroot::is_rstudio_project$find_file()
 .main-container {
     max-width: 1200px;
 }
+img {
+  padding-top: 10px;
+}
 ```
 
 ```{r diffusion_functions, cache=TRUE}
@@ -272,13 +275,28 @@ RT_quantiles <- bind_rows(predicted = pred_RT_quantiles,
          )
 ```
 
+```{r g2}
+null_deviance <- speeded_RT_choice_quantiles %>%
+  group_by(subject, strength) %>%
+  mutate(observed_p = bin_counts/sum(bin_counts)) %>%
+  summarise(LL = dmultinom(bin_counts, sum(bin_counts), observed_p, log=TRUE)) %>%
+  group_by(subject) %>%
+  summarise(null_deviance = -2*sum(LL))
+
+diffusion_fits<- left_join(diffusion_fits,
+                           null_deviance,
+                           by = "subject") %>% 
+  mutate(G2 = (2*value) - null_deviance,
+         p = pchisq(G2, df = 27, lower.tail = FALSE))
+```
+
 ```{r plots, fig.width=11, fig.align="center", results="asis"}
 
 formatted_names <- c(
                      "V<sub>L</sub>", "V<sub>W</sub>", "V<sub>S</sub>",
                      "S<sub>vL</sub>", "S<sub>vT</sub>",
                      "a", "z", "t<sub>0</sub>", "s<sub>t0</sub>",
-                     "-LL", "Conv. Code")
+                     "-LL", "G<sup>2<sup>", "p(X<sup>2</sup><sub>27</sub>)", "Conv. Code")
 model_name_key <- c("observed" = "Observed",
                     "drift_free" = "Free V",
                     "drift_fixed" = "Fixed V")
@@ -290,7 +308,8 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
   subject_params <- filter(diffusion_fits, subject == s)
   rownames(subject_params) <- model_name_key[subject_params$model]
   
-  kable(select(subject_params, v.L, v.W, v.S, sv.L, sv.T, a, z, t0, st0, value, convcode),
+  kable(select(subject_params, v.L, v.W, v.S, sv.L, sv.T, a, z, t0, st0,
+               value, G2, p, convcode),
         digits = 3,
         col.names = formatted_names,
         row.names = TRUE,
@@ -298,6 +317,15 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
         ) %>%
     kableExtra::kable_styling(full_width = FALSE) %>%
     print()
+
+  subject_params <- arrange(subject_params, G2)
+  model_diff <- diff(subject_params$G2)
+  p <- pchisq(model_diff, 3, lower.tail = FALSE)
+
+  cat(sprintf("<p><b>Model Difference:</b> %s - %s = %.3f, p(X<sup>2</sup><sub>3</sub>) = %.3f",
+            subject_params$model[2], subject_params$model[1],
+            model_diff, p)
+      )
 
   acc_plot <-
     ggplot(filter(accuracy, subject == s),
