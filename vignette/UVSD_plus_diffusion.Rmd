@@ -322,9 +322,21 @@ SDT_preds <- rowwise(SDT_params) %>%
   select(subject, SDT) %>%
   unnest()
 
+ROC_by_sub <- mutate(delayed_counts_by_sub_bias,
+         FAR = FA / FA_N,
+         HR_W = H_W / W_N,
+         HR_S = H_S / S_N
+         ) %>%
+  select(subject, pOld, FAR, HR_W, HR_S) %>%
+  gather(key = "strength", value = "HR", HR_W, HR_S) %>%
+  arrange(subject, desc(strength)) %>%
+  mutate(strength = sub("HR_", "", strength, fixed=TRUE))
+
 ggplot(SDT_preds,
        aes(x=FAR, y=HR, color=strength)) +
   geom_line(size=.8) +
+  geom_point(aes(shape= factor(pOld)),
+             data=ROC_by_sub) +
   facet_wrap(~ subject,
              labeller = labeller(subject = label_both,
                                  .multi_line = FALSE),
@@ -333,10 +345,12 @@ ggplot(SDT_preds,
                      labels = c(0,0.25, 0.5, 0.75, 1)) +
   scale_y_continuous("Hit Rate", limits = c(0,1)) +
   scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
-  guides(colour = guide_legend(override.aes = list(size = 4))) +
+  guides(colour = guide_legend(override.aes = list(size = 4)),
+         shape = guide_legend(override.aes = list(size = 4))) +
   coord_fixed() +
   ggtitle("Predicted ROC for delayed judgments") +
   theme_bw(base_size = 13) +
-  theme(legend.position = c(.75, .1))
+  theme(legend.position = c(.75, .1),
+        legend.box = "horizontal")
 ```
 
