@@ -184,7 +184,7 @@ diffusion_LL <- function(parameters, data, fixed=NULL, scale=FALSE){
 }
 ```
 
-```{r start_cluster, eval=FALSE}
+```{r start_cluster}
 cl <- parallel::makeCluster(parallel::detectCores(),
                             outfile = "",
                             methods = FALSE)
@@ -215,6 +215,8 @@ doParallel::registerDoParallel(cl)
 SDT_diffusion_LL_sum <- function(theta, ...) {
   
   trailing <- list(...)
+  
+  
   
   SDT_nLL <- SDT_LL(d = theta[c("d.W","d.S")],
                     s = theta["s"],
@@ -285,8 +287,8 @@ fits <- foreach(sub = subjectwise_datalist,
                 FA = sub$biased[c("FA", "FA_N")] # passed to SDT_LL
               )
 
-  fit$subject <- sub$subject[1]
-  fit[c("v.W","v.S","sv.T")] <- fit[c("d.W","d.W","s")]  # This looks stupid but is useful
+  fit$subject <- sub$speeded$subject[1]
+  fit[c("v.W","v.S","sv.T")] <- fit[c("d.W","d.S","s")]  # This looks stupid but is useful
   scaled <- SDT2diffusion(unlist(fit[c('v.L','sv.L',"v.W","v.S","sv.T")]))
   fit[c("v.W","v.S","sv.T")] <- as.list(scaled[c("v.W","v.S","sv.T")])
   fit
