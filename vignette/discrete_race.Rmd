@@ -241,6 +241,7 @@ test <- select(test, -list)
 
 ```{r observed_RT_choice_data}
 speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
+  filter(speeded_RT > 200) %>%
   mutate(speeded_RT = speeded_RT/1000) %>%
   group_by(subject, strength, speeded_correct) %>%
   summarise(quintiles = list(
