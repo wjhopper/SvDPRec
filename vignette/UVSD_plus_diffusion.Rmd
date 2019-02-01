@@ -11,7 +11,7 @@ editor_options:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center", dev = 'svg')
 library(rprojroot)
 library(tidyr)
 library(ggplot2)
@@ -307,7 +307,7 @@ diffusion_params <- select(fits, subject, v.L, sv.L,v.W, v.S, sv.T, a:st0)
 GOF <- select(fits, subject, value:convcode)
 ```
 
-```{r SDT_preds}
+```{r SDT_preds, fig.height=12, fig.width=9}
 FAR_points <- seq(0, 1, .01)
 SDT_preds <- rowwise(SDT_params) %>%
   mutate(SDT = list(
@@ -335,7 +335,7 @@ ROC_by_sub <- mutate(delayed_counts_by_sub_bias,
 ggplot(SDT_preds,
        aes(x=FAR, y=HR, color=strength)) +
   geom_line(size=.8) +
-  geom_point(aes(shape= factor(pOld)),
+  geom_point(aes(shape = factor(pOld)),
              data=ROC_by_sub) +
   facet_wrap(~ subject,
              labeller = labeller(subject = label_both,
@@ -345,6 +345,7 @@ ggplot(SDT_preds,
                      labels = c(0,0.25, 0.5, 0.75, 1)) +
   scale_y_continuous("Hit Rate", limits = c(0,1)) +
   scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
+  scale_shape_discrete("pOld") +
   guides(colour = guide_legend(override.aes = list(size = 4)),
          shape = guide_legend(override.aes = list(size = 4))) +
   coord_fixed() +
