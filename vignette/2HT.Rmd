@@ -22,6 +22,7 @@ library(foreach)
 library(rstan)
 library(tidybayes)
 library(ggplot2)
+library(MPTinR)
 rstan_options(auto_write = TRUE)
 options(mc.cores = parallel::detectCores())
 root_dir <- rprojroot::is_rstudio_project$find_file()
@@ -62,8 +63,7 @@ delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
 # and strength (lure, weak, strong) along dim 3.
 delayed_counts_by_sub_bias <- arrange(delayed_counts_by_sub_bias, subject, desc(pOld)) %>%
   mutate(CR = L_N - FA,
-         H_S = replace(H_S, H_S == S_N, H_S[H_S == S_N]-1)) %>%
-  select(subject, pOld, CR, L_N, H_S, S_N, H_W, W_N)
+         H_S = replace(H_S, H_S == S_N, H_S[H_S == S_N]-1))
 
 corrects_matrix = t(as.matrix(delayed_counts_by_sub_bias[c('CR','H_W','H_S')]))
 dim(corrects_matrix) <- c(3, 3, 14)
@@ -178,5 +178,94 @@ for (s in unique(ROC_data$subject)) {
       coord_equal()
     print(ROC)
 }
+```
+
+## MLE Version
+### Parameters
+```{r 2HT_model_and_data, cache=TRUE}
+twoHT_model <- "
+# Tree for strong items in pOld=25% condition. First 'old', then 'new'
+dS + (1-dS) * gC
+(1-dS)*(1-gC)
+
+# Tree for weak items in pOld=25% condition. First 'old', then 'new'
+dW + (1-dW) * gC
+(1-dW)*(1-gC)
+
+#Tree for lures in pOld=25% condition. First 'old', then 'new'
+(1-dN) * gC
+dN + (1-dN) * (1 - gC)
+
+# Tree for strong items in pOld=50% condition. First 'old', then 'new'
+dS + (1-dS) * gN
+(1-dS)*(1-gN)
+
+# Tree for weak items in pOld=50% condition. First 'old', then 'new'
+dW + (1-dW) * gN
+(1-dW)*(1-gN)
+
+#Tree for lures in pOld=50% condition. First 'old', then 'new'
+(1-dN) * gN
+dN + (1-dN) * (1 - gN)
+
+# Tree for strong items in pOld=75% condition. First 'old', then 'new'
+dS + (1-dS) * gL
+(1-dS)*(1-gL)
+
+# Tree for weak items in pOld=75% condition. First 'old', then 'new'
+dW + (1-dW) * gL
+(1-dW)*(1-gL)
+
+#Tree for lures in pOld=75% condition. First 'old', then 'new'
+(1-dN) * gL
+dN + (1-dN) * (1 - gL)
+"
+
+twoHT_data_layout <- transmute(delayed_counts_by_sub_bias,
+  subject,
+  pOld,
+  strong_old = H_S,
+  strong_new = S_N - H_S,
+  weak_old = H_W,
+  weak_new = W_N - H_W,
+  lure_old = FA,
+  lure_new = L_N - FA) %>%
+  gather("response","count", -subject, -pOld) %>%
+  unite(condition, pOld, response) %>%
+  spread(condition, count) %>%
+  select(subject,
+         `0.25_strong_old`, `0.25_strong_new`,
+         `0.25_weak_old`, `0.25_weak_new`,
+         `0.25_lure_old`, `0.25_lure_new`,
+         `0.5_strong_old`, `0.5_strong_new`,
+         `0.5_weak_old`, `0.5_weak_new`,
+         `0.5_lure_old`, `0.5_lure_new`,
+         `0.75_strong_old`, `0.75_strong_new`,
+         `0.75_weak_old`, `0.75_weak_new`,
+         `0.75_lure_old`, `0.75_lure_new`) %>%
+  as.data.frame() %>%
+  tibble::column_to_rownames("subject") %>%
+  data.matrix()
+```
+
+```{r 2HT_fit,cache=TRUE, dependson="2HT_model_and_data"}
+fit <- fit.mpt(twoHT_data_layout, textConnection(twoHT_model),show.messages = FALSE)
+params <- fit$parameters[[1]][,1,]
+colnames(params) <- paste("Subject", 101:114)
+params <- t(params)
+```
+
+```{r 2HT_frequentist_reporting}
+kable(params, digits=3) %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  column_spec(1, bold = TRUE)
+
+GOF <- bind_rows(fit$goodness.of.fit$individual,
+                 fit$goodness.of.fit$sum)
+rownames(GOF) <- c(paste("Subject", 101:114), "Total")
+
+kable(GOF, digits=3) %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  column_spec(1, bold = TRUE)
 ```
 
