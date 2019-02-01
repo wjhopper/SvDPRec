@@ -37,7 +37,7 @@ load(file.path(root_dir, "data","SvDPRec.Rdata"))
 test <- select(test, -list)
 ```
 
-```{r cell_counts}
+```{r cell_counts, cache=TRUE}
 delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
   select(-starts_with("speeded")) %>%
   rename(correct = delayed_correct) %>%
@@ -73,7 +73,7 @@ speeded_acc <- filter(test, !is.na(type)) %>%
 
 ```
 
-```{r SDT_model_functions}
+```{r SDT_model_functions, cache=TRUE, dependson=c("cell_counts")}
 SDT <- function(d, s, crit) {
 
   # if (is.unsorted(rev(crit))) {
@@ -110,7 +110,7 @@ SDT_LL <- function(H_S, H_W, FA, ...) {
 }
 ```
 
-```{r diffusion_functions, cache=TRUE}
+```{r diffusion_functions, cache=TRUE, dependson=c("cell_counts")}
 
 SDT2diffusion <- function(parameters) {
   
@@ -184,40 +184,36 @@ diffusion_LL <- function(parameters, data, fixed=NULL, scale=FALSE){
 }
 ```
 
-```{r start_cluster}
+## Diffusion Model Parameters
+- `a` = boundary separation
+- `z` = starting point (parameterized here as a proportion of boundary separation)
+- `t0` = lower bound of non-decision RT component
+- `st0` = range of uniform distribution of non-decision times. NDT distribution is U(t0, t0+st0)
+- `v.L` = drift rate for lures (fixed at 1)
+- `v.W` = drift rate for weak targets
+- `v.S` = drift rate for strong targets
+- `sv.L` = inter-trial drift variance for lures
+- `cv.T` = inter-trial drift variance for targets (both weak and strong)
+
+## UVSD Model Paramters
+- `d.W` = Mean of "weak" target distribution
+- `d.S` = Mean of "strong" target distribution
+- `s` = Varaibility of both target distributions 
+- `crit1` = Threshold for conservative bias condition
+- `crit2` = Threshold for neutral bias condition
+- `crit3` = Threshold for weak bias condition
+
+```{r fit, cache=TRUE, dependson=c("diffusion_functions", "SDT_model_functions")}
 cl <- parallel::makeCluster(parallel::detectCores(),
                             outfile = "",
                             methods = FALSE)
 
 doParallel::registerDoParallel(cl)
-```
 
-## Diffusion Model Parameters
-- a = boundary separation
-- z = starting point (parameterized here as a proportion of boundary separation)
-- t0 = lower bound of non-decision RT component
-- st0 = range of uniform distribution of non-decision times. NDT distribution is U(t0, t0+st0)
-- v.L = drift rate for lures (fixed at 1)
-- v.W = drift rate for weak targets
-- v.S = drift rate for strong targets
-- sv.L = inter-trial drift variance for lures
-- cv.T = inter-trial drift variance for targets (both weak and strong)
-
-## UVSD Model Paramters
-- d.W = Mean of "weak" target distribution
-- d.S = Mean of "strong" target distribution
-- s = Varaibility of both target distributions 
-- crit1 = Threshold for conservative bias condition
-- crit2 = Threshold for neutral bias condition
-- crit3 = Threshold for weak bias condition
-
-```{r fit, cache=TRUE}
 SDT_diffusion_LL_sum <- function(theta, ...) {
-  
+
   trailing <- list(...)
-  
-  
-  
+
   SDT_nLL <- SDT_LL(d = theta[c("d.W","d.S")],
                     s = theta["s"],
                     crit = theta[c("crit1", "crit2", "crit3")],
@@ -295,19 +291,28 @@ fits <- foreach(sub = subjectwise_datalist,
 }
 
 fits <- bind_rows(fits)
-```
 
-```{r stop_cluster}
 parallel::stopCluster(cl)
 ```
 
-```{r param_processing}
+```{r param_processing, cache=TRUE, dependson="fit"}
+GOF <- select(fits, subject, value:convcode) %>%
+  rename(`-LL` = value) %>%
+  mutate(deviance = 2*`-LL`)
+
 SDT_params <- select(fits, subject, d.W:crit3)
-diffusion_params <- select(fits, subject, v.L, sv.L,v.W, v.S, sv.T, a:st0)
-GOF <- select(fits, subject, value:convcode)
+
+diffusion_params <- select(fits, subject, v.L, sv.L,v.W, v.S, sv.T, a:st0) %>%
+  mutate(sv.W = sv.T) %>%
+  rename(sv.S = sv.T) %>%
+  gather(key='param', value='value', v.L, v.W, v.S, sv.L, sv.W, sv.S) %>%
+  separate(param, into=c("param", "strength")) %>%
+  spread(param, value) %>%
+  select(subject, strength, a:st0, v, sv)
+
 ```
 
-```{r SDT_preds, fig.height=12, fig.width=9}
+```{r SDT_preds, fig.height=12, fig.width=9, cache=TRUE, dependson="fit"}
 FAR_points <- seq(0, 1, .01)
 SDT_preds <- rowwise(SDT_params) %>%
   mutate(SDT = list(
@@ -355,3 +360,150 @@ ggplot(SDT_preds,
         legend.box = "horizontal")
 ```
 
+```{r diffusion_predictions, cache=TRUE, dependson="fit"}
+diffusion_acc_preds <- rowwise(diffusion_params) %>%
+  mutate(p_resp_old = pdiffusion(Inf, response = 2, a=a, v=v, t0=t0, z=z*a, sv=sv, st0=st0),
+         acc = replace(p_resp_old, strength == "L", 1 - p_resp_old[strength == "L"])
+         ) %>%
+  select(-p_resp_old) %>%
+  ungroup()
+
+accuracy <- bind_rows(predicted = select(mutate(diffusion_acc_preds, model="diffusion"),
+                                         subject, model, strength, acc),
+                      observed = mutate(speeded_acc, model = 'observed')
+                      )
+diffusion_RT_quantiles <- rowwise(diffusion_params) %>%
+  mutate(RT = list(as.data.frame(matrix(
+                qdiffusion(p = rep(c(.1, .3, .5, .7, .9), 2),
+                           response = rep(1:2, each = 5),
+                           a = a, z = z*a, t0 = t0, st0 = st0,
+                           v = v, sv = sv,
+                           scale_p = TRUE),
+                nrow=2, ncol=5,
+                byrow=TRUE,
+                dimnames = list(c("Incorrect","Correct"),
+                                quantile = c("10%","30%", "50%", "70%", "90%"))
+                )))
+         ) %>%
+  unnest() %>% 
+  mutate(speeded_judgment = rep(c('n', 'o'), nrow(.)/2)) %>%
+  select(subject, strength, speeded_judgment, `10%`, `30%`, `50%`, `70%`, `90%`) %>%
+  gather('quantile', 'value', `10%`, `30%`, `50%`, `70%`, `90%`)
+
+RT_quantiles <- bind_rows(predicted = mutate(diffusion_RT_quantiles, model="diffusion"),
+                          observed = filter(speeded_RT_choice_quantiles, quantile != "100%") %>%
+                                     select(-bin_counts) %>%
+                                     mutate(model = 'observed')
+                          ) %>%
+  mutate(speeded_correct = ifelse((strength == "L" & speeded_judgment == "n") |
+                                    strength %in% c("S", "W") & speeded_judgment == "o",
+                                  TRUE,
+                                  FALSE)
+         )
+```
+
+```{r g2, cache=TRUE, dependson="fit"}
+speeded_RT_deviance <- speeded_RT_choice_quantiles %>%
+  group_by(subject, strength) %>%
+  mutate(observed_p = bin_counts/sum(bin_counts)) %>%
+  summarise(LL = dmultinom(bin_counts, sum(bin_counts), observed_p, log=TRUE)) %>%
+  group_by(subject) %>%
+  summarise(null_deviance = -2*sum(LL))
+
+delayed_acc_deviance <- mutate(delayed_counts_by_sub_bias,
+         FA_LL = dbinom(FA, FA_N, FA/FA_N, log=TRUE),
+         HW_LL = dbinom(H_W, W_N, H_W/W_N, log=TRUE),
+         HS_LL = dbinom(H_S, S_N, H_S/S_N, log=TRUE),
+         LL = FA_LL + HW_LL + HS_LL) %>%
+  select(subject, pOld, LL) %>%
+  group_by(subject) %>%
+  summarise(null_deviance = -2*sum(LL))
+
+null_deviance <- left_join(speeded_RT_deviance, delayed_acc_deviance,
+                           by="subject",suffix=c(".RT",".acc")) %>%
+  transmute(subject,
+            null_deviance = null_deviance.RT + null_deviance.acc)
+
+data_df <- 9 + 33 # 9 Hit/FA rates, 33 free RT bins
+model_df <- 12 # 6 SDT  params, 9 diffusion params - 3 shared (the target drift and drift variability params)
+
+g2 <- left_join(select(GOF, subject, deviance),
+                null_deviance,
+                by = "subject") %>% 
+  mutate(G2 = deviance - null_deviance,
+         p = pchisq(G2, df = data_df - model_df, lower.tail = FALSE)
+         )
+
+GOF <- left_join(select(GOF, -deviance),
+                 select(g2, subject, G2, p),
+                 by="subject")
+```
+
+```{r plots, results='asis', fig.height=6, fig.width=9, cache=TRUE, dependson="fit"}
+for (s in unique(fits$subject)) {
+  
+  cat(sprintf("<h3>Subject %s</h3>", s))
+  
+  subject_params <- filter(diffusion_params, subject == s) %>%
+    mutate(strength = factor(strength, levels = c("L", "W", "S"))) %>%
+    arrange(strength)
+  subject_GOF <- filter(GOF, subject == s)
+  
+  kable(subject_params, digits = 3) %>%
+    kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+    column_spec(1:2, bold=TRUE) %>%
+    collapse_rows(c(1,3:6, 8)) %>%
+    print()
+  
+  kable(subject_GOF, digits = 3) %>%
+    kableExtra::kable_styling(full_width = FALSE, position = "float_right") %>%
+    print()
+  
+  acc_plot <-
+    ggplot(filter(accuracy, subject == s),
+          aes(x=strength, y=acc, shape=model, color=strength)) +
+    geom_point(size=2,stroke=2, position = position_dodge(.25)) +
+    scale_shape_manual("",
+                       values = c(16,4),
+                       limits = c("observed","diffusion"),
+                       labels = c("Observed", "Diffusion")) +
+    scale_color_discrete(labels = c("L" = "Lure",
+                                    "W" = "Weak\nTarget",
+                                    "S" = "Strong\nTarget"),
+                         breaks = c("L","W","S")) +
+    scale_y_continuous("Percent Correct", limits = c(0, 1)) +
+    scale_x_discrete(labels = c("L" = "Lure",
+                                "W" = "Weak\nTarget",
+                                "S" = "Strong\nTarget"),
+                     limits = c("L","W","S"),
+                     expand = c(0, .2)) +
+    theme(legend.key.height = unit(9, 'mm'))
+  
+  quantile_plot <- 
+    ggplot(filter(RT_quantiles, subject == s),
+           aes(x=quantile, y=value, shape=model, color=strength)) +
+    geom_point(size=2) +
+    geom_line(aes(group=model)) +
+    facet_grid(speeded_correct ~ strength,
+               labeller = labeller(speeded_correct = as_labeller(
+                                    c("TRUE" = "Correct",
+                                      "FALSE" = "Error")
+                                    ),
+                                    strength = as_labeller(
+                                      c("L" = "Lure",
+                                        "S" = "Strong Target",
+                                        "W" = "Weak Target")
+                                    )
+                                   )
+               ) +
+    scale_shape_manual("",
+                       values = c(16,4),
+                       limits = c("observed", "diffusion"),
+                       labels = c("Observed", "Diffusion")) +
+    scale_y_continuous("RT Quantile Value (s.)") +
+    guides(color=FALSE, shape=FALSE)
+  
+  gridExtra::grid.arrange(acc_plot, quantile_plot, nrow=1,
+                          widths=c(.35, .65))
+}
+```
