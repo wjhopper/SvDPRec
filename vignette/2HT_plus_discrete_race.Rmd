@@ -346,6 +346,76 @@ fits <- foreach(sub = subjectwise_datalist,
 
 parallel::stopCluster(cl)
 
-fits <- bind_rows(fits) %>%
-  select(subject, dNew.L:convcode)
+fits <- select(bind_rows(fits), subject, dNew.L:convcode)
+
+GOF <- select(fits, subject, value:convcode) %>%
+  rename(`-LL` = value) %>%
+  mutate(deviance = 2*`-LL`)
+
+twoHT_params <- select(fits, subject, dNew.L, dOld.W, dOld.S, gC, gN, gL)
+
+DR_params <- select(fits, subject, dNew.L, dOld.W, dOld.S, gOld, mu.d, mu.g, sigma, nu)
+```
+
+```{r speeded_predictions}
+DR_probabilities <- Map(DR_predictions,
+                        lapply(split(DR_params, DR_params$subject), function(x) unlist(x[2:9])),
+                        lapply(subjectwise_datalist, `[[`, "speeded")
+                        ) %>%
+  bind_rows() %>%
+  group_by(subject, strength, speeded_correct) %>%
+  mutate(observed_p = bin_counts/sum(bin_counts)) %>%
+  group_by(subject, strength) %>%
+  mutate(observed_p = observed_p*c(rep(sum(bin_counts[!speeded_correct])/sum(bin_counts), 6),
+                                   rep(sum(bin_counts[speeded_correct])/sum(bin_counts), 6))
+         ) %>%
+  ungroup() %>%
+  mutate(strength = factor(strength, levels = c("L","W","S")))
+
+FAR_points <- seq(0, 1, .01)
+twoHT_ROC <- rowwise(twoHT_params) %>%
+  mutate(twoHT = list(
+    data.frame(FAR = rep(FAR_points, 2),
+               strength = rep(c("W", "S"), each = length(FAR_points)),
+               HR = c( ((1-dOld.W)/(1-dNew.L)*FAR_points) + dOld.W,
+                       ((1-dOld.S)/(1-dNew.L)*FAR_points) + dOld.S
+                      ),
+               type = "pred")
+    )) %>%
+  select(subject, twoHT) %>%
+  unnest()
+
+ROC_by_sub <- mutate(delayed_counts_by_sub_bias,
+         FAR = FA / FA_N,
+         HR_W = H_W / W_N,
+         HR_S = H_S / S_N
+         ) %>%
+  select(subject, pOld, FAR, HR_W, HR_S) %>%
+  gather(key = "strength", value = "HR", HR_W, HR_S) %>%
+  arrange(subject, desc(strength)) %>%
+  mutate(strength = sub("HR_", "", strength, fixed=TRUE))
+```
+
+```{r ROC}
+ggplot(twoHT_ROC,
+       aes(x=FAR, y=HR, color=strength)) +
+  geom_line(size=.8) +
+  geom_point(aes(shape = factor(pOld)),
+             data=ROC_by_sub) +
+  facet_wrap(~ subject,
+             labeller = labeller(subject = label_both,
+                                 .multi_line = FALSE),
+             ncol=4) +
+  scale_x_continuous("False Alarm Rate", limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
+  scale_shape_discrete("pOld") +
+  guides(colour = guide_legend(override.aes = list(size = 4)),
+         shape = guide_legend(override.aes = list(size = 4))) +
+  coord_fixed() +
+  ggtitle("Predicted ROC for delayed judgments") +
+  theme_bw(base_size = 13) +
+  theme(legend.position = c(.75, .1),
+        legend.box = "horizontal")
 ```
