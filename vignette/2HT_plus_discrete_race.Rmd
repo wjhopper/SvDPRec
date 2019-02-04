@@ -23,6 +23,14 @@ library(dplyr)
 root_dir <- rprojroot::is_rstudio_project$find_file()
 ```
 
+```{css}
+.main-container {
+    max-width: 1200px;
+}
+img {
+  padding-top: 10px;
+}
+```
 ```{r load_data}
 load(file.path(root_dir, "data", "SvDPRec.Rdata"))
 test <- select(test, -list)
@@ -276,7 +284,7 @@ DR_LL <- function(parameters, data, fixed=NULL){
 ```
 
 
-```{r 2HT}
+```{r 2HT, cache=TRUE}
 twoHT_LL <- function(detect, guess, counts) {
   FA <- (1-detect['dNew.L'])*guess
   HR_W <- detect['dOld.W'] + (1-detect['dOld.W'])*guess 
@@ -290,7 +298,7 @@ twoHT_LL <- function(detect, guess, counts) {
 }
 ```
 
-```{r fit, cache=TRUE, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions")}
+```{r fit, cache=TRUE, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions", "2HT")}
 cl <- parallel::makeCluster(parallel::detectCores(),
                             outfile = "",
                             methods = FALSE)
@@ -357,8 +365,8 @@ twoHT_params <- select(fits, subject, dNew.L, dOld.W, dOld.S, gC, gN, gL)
 DR_params <- select(fits, subject, dNew.L, dOld.W, dOld.S, gOld, mu.d, mu.g, sigma, nu)
 ```
 
-```{r speeded_predictions}
-DR_probabilities <- Map(DR_predictions,
+```{r speeded_RT_predictions, cache=TRUE, dependson="fit"}
+DR_bin_probabilities <- Map(DR_predictions,
                         lapply(split(DR_params, DR_params$subject), function(x) unlist(x[2:9])),
                         lapply(subjectwise_datalist, `[[`, "speeded")
                         ) %>%
@@ -369,9 +377,30 @@ DR_probabilities <- Map(DR_predictions,
   mutate(observed_p = observed_p*c(rep(sum(bin_counts[!speeded_correct])/sum(bin_counts), 6),
                                    rep(sum(bin_counts[speeded_correct])/sum(bin_counts), 6))
          ) %>%
-  ungroup() %>%
-  mutate(strength = factor(strength, levels = c("L","W","S")))
+  ungroup()
 
+DR_acc <- group_by(DR_bin_probabilities,
+                   subject, strength, speeded_correct) %>%
+  summarise_at(c("observed_p","predicted_p"), sum) %>%
+  ungroup() %>%
+  gather("type", "p", observed_p, predicted_p) %>%
+  mutate(type = sub("_p", "", type)) %>%
+  arrange(subject, strength, speeded_correct)
+
+DR_pred_quantiles <- Map(DR_quantiles,
+                    lapply(split(DR_params, DR_params$subject), function(x) unlist(x[2:9])),
+                    lapply(subjectwise_datalist, `[[`, "speeded")
+                    ) %>%
+  bind_rows() %>%
+  select(-bin_counts) %>%
+  rename(observed=value) %>%
+  gather("type", "value", observed, predicted_qValue) %>%
+  mutate(type = sub("_.", "", type),
+         type = sub("Value", "", type, fixed=TRUE))
+
+```
+
+```{r delayed_acc_predictions, cache=TRUE, dependson="fit"}
 FAR_points <- seq(0, 1, .01)
 twoHT_ROC <- rowwise(twoHT_params) %>%
   mutate(twoHT = list(
@@ -396,7 +425,44 @@ ROC_by_sub <- mutate(delayed_counts_by_sub_bias,
   mutate(strength = sub("HR_", "", strength, fixed=TRUE))
 ```
 
-```{r ROC}
+```{r g2, cache=TRUE, dependson="fit"}
+speeded_RT_deviance <- speeded_RT_choice_quantiles %>%
+  group_by(subject, strength) %>%
+  mutate(observed_p = bin_counts/sum(bin_counts)) %>%
+  summarise(LL = dmultinom(bin_counts, sum(bin_counts), observed_p, log=TRUE)) %>%
+  group_by(subject) %>%
+  summarise(null_deviance = -2*sum(LL))
+
+delayed_acc_deviance <- mutate(delayed_counts_by_sub_bias,
+         FA_LL = dbinom(FA, FA_N, FA/FA_N, log=TRUE),
+         HW_LL = dbinom(H_W, W_N, H_W/W_N, log=TRUE),
+         HS_LL = dbinom(H_S, S_N, H_S/S_N, log=TRUE),
+         LL = FA_LL + HW_LL + HS_LL) %>%
+  select(subject, pOld, LL) %>%
+  group_by(subject) %>%
+  summarise(null_deviance = -2*sum(LL))
+
+null_deviance <- left_join(speeded_RT_deviance, delayed_acc_deviance,
+                           by="subject",suffix=c(".RT",".acc")) %>%
+  transmute(subject,
+            null_deviance = null_deviance.RT + null_deviance.acc)
+
+data_df <- 9 + 33 # 9 Hit/FA rates, 33 free RT bins
+model_df <- 11 # 6 2HT params, 8 discrete race params - 3 shared (the detect parameters)
+
+g2 <- left_join(select(GOF, subject, deviance),
+                null_deviance,
+                by = "subject") %>% 
+  mutate(G2 = deviance - null_deviance,
+         p = pchisq(G2, df = data_df - model_df, lower.tail = FALSE)
+         )
+
+GOF <- left_join(select(GOF, -deviance),
+                 select(g2, subject, G2, p),
+                 by="subject")
+```
+
+```{r ROC, cache=TRUE, dependson="fit", fig.height=12, fig.width=9}
 ggplot(twoHT_ROC,
        aes(x=FAR, y=HR, color=strength)) +
   geom_line(size=.8) +
@@ -418,4 +484,73 @@ ggplot(twoHT_ROC,
   theme_bw(base_size = 13) +
   theme(legend.position = c(.75, .1),
         legend.box = "horizontal")
+```
+
+```{r DR_plots, cache=TRUE, dependson="fit", fig.width=9, fig.align="center", results="asis"}
+
+formatted_names <- c("Model",
+                     "D<sub>L</sub>", "D<sub>W</sub>", "D<sub>S</sub>", "G<sub>old</sub>",
+                     "\u03BC<sub>D</sub>", "\u03BC<sub>G</sub>", "&sigma;", "τ")
+
+for (s in unique(fits$subject)) {
+  
+  cat(sprintf("<h3>Subject %s</h3>", s))
+  
+  subject_params <- filter(DR_params, subject == s)
+  kable(subject_params,
+        digits = 3,
+        col.names = formatted_names,
+        escape = FALSE) %>%
+    kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+    print()
+
+    kable(filter(GOF, subject == s), digits = 3) %>%
+    kableExtra::kable_styling(full_width = FALSE, position = "float_right") %>%
+    print()
+    
+  acc_plot <-
+    ggplot(filter(DR_acc, subject == s, speeded_correct),
+          aes(x=strength, y=p, shape=type, color=strength)) +
+    geom_point(size=2,stroke=2) +
+    scale_shape_manual("",
+                       values = c(16,4),
+                       breaks = c("observed","predicted")
+                       ) +
+    scale_color_discrete(labels = c("L" = "Lure",
+                                    "W" = "Weak\nTarget",
+                                    "S" = "Strong\nTarget")
+                         ) +
+    scale_y_continuous("Percent Correct", limits = c(0, 1)) +
+    scale_x_discrete(labels = c("L" = "Lure",
+                                "W" = "Weak\nTarget",
+                                "S" = "Strong\nTarget"),
+                     expand = c(0, .2)) +
+    theme(legend.key.height = unit(9, 'mm'))
+  
+  quantile_plot <- 
+    ggplot(filter(DR_pred_quantiles, subject == s, quantile != "100%"),
+           aes(x=quantile, y=value, shape=type, color=strength)) +
+    geom_point(size=1.5) +
+    geom_line(aes(group=type)) +
+    facet_grid(speeded_correct ~ strength,
+               labeller = labeller(speeded_correct = as_labeller(
+                                    c("TRUE" = "Correct",
+                                      "FALSE" = "Error")
+                                    ),
+                                    strength = as_labeller(
+                                      c("L" = "Lure",
+                                        "S" = "Strong Target",
+                                        "W" = "Weak Target")
+                                    )
+                                   )
+               ) +
+    scale_shape_manual(values=c(16,4),
+                   breaks=c("observed","predicted")
+                   ) +
+    scale_y_continuous("RT Quantile Value (s.)") +
+    guides(color=FALSE, shape=FALSE)
+  
+  gridExtra::grid.arrange(acc_plot, quantile_plot, nrow=1,
+                          widths=c(.35, .65))
+}
 ```
