@@ -318,8 +318,8 @@ SDT_preds <- rowwise(SDT_params) %>%
   mutate(SDT = list(
     data.frame(FAR = rep(FAR_points, 2),
                strength = rep(c("W", "S"), each = length(FAR_points)),
-               HR = pnorm(c(qnorm(FAR_points)/s + d.W,
-                            qnorm(FAR_points)/s + d.S
+               HR = pnorm(c((qnorm(FAR_points) + d.W)/s,
+                            (qnorm(FAR_points) + d.S)/s
                             )
                           ),
                type = "pred")
