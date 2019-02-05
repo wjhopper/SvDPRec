@@ -102,6 +102,15 @@ subject_params <- spread_draws(fit, `GO_.*`[subject], `D.*`[subject], regex=TRUE
 subject_param_summaries <- mean_hdi(subject_params)
   
 pop_params <- spread_draws(fit, `beta_.*`[parameter_index], regex=TRUE)
+
+param_index_key <- c("DN", "DO_W", "DO_S", "GO_Lib", "GO_Neut", "GO_Cons")
+pop_param_summaries <- mean_hdi(pop_params) %>%
+  select(-.point, -.interval, -.width) %>%
+  mutate(parameter_index = param_index_key[parameter_index]) %>%
+  gather("param", "value", -parameter_index) %>%
+  mutate(param = sub("beta_", "", param)) %>%
+  unite(col=param, parameter_index, param) %>%
+  spread(param, value)
 ```
 
 ```{r point_predictions}
