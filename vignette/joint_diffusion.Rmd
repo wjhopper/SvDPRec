@@ -1,0 +1,220 @@
+---
+title: "Joint Diffusion Modeling"
+author: "William Hopper"
+date: "`r format(Sys.Date(), '%b %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
+library(rprojroot)
+library(kableExtra)
+library(optimx)
+library(foreach)
+library(rtdists)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+root_dir <- rprojroot::is_rstudio_project$find_file()
+```
+
+```{css }
+.main-container {
+    max-width: 1200px;
+}
+img {
+  padding-top: 10px;
+}
+```
+
+```{r diffusion_functions, cache=TRUE}
+source(file.path(root_dir, "R", "DiffSim.R"))
+
+diffusion_obj <- function(theta, data, fixed=NULL, scale=FALSE){
+
+  parameters <- c(parameters, fixed)
+  log_likelihood <- 0
+  Nsim <- 1e4
+
+  all_strengths <- unique(data$strength) # Study conditions to loop over
+  biases <- unique(data$bias) # Bias conditions to loop over
+  boundaries <- c(0,1) # Boundaries to loop over
+  
+  for (strength in all_strengths) {
+    for (bias in biases) {
+      
+      sv <- if (strength == "L") { parameters["sv.L"] } else { parameters["sv.T"] }
+      
+      condition_index <- data$strength==strength & data$bias == bias
+      if (!any(condition_index)) {
+        break
+      }
+      bin_counts <- data$bin_counts[condition_index]
+      p <- numeric(sum(condition_index))
+
+      sim_data <- diffusion_SDT_sim(N=Nsim, a = theta["a"], z = theta['z'],
+                                    v = theta[paste0("v.", strength)], sv = sv,
+                                    t0 = theta["t0"], st0 = theta["st0"],
+                                    crit_old = theta[paste0("crit.", bias)],
+                                    crit_new = theta[paste0("crit.", bias)])
+
+      insert_at = 1
+      for (sp_resp in boundaries) {
+        for (del_resp in boundaries) {
+
+          resp_index <- condition_index &
+                        data$speeded_boundary == sp_resp &
+                        data$delayed_boundary== del_resp
+          matching_sim_responses <- sim_data[,'speeded_resp'] == sp_resp &
+                                    sim_data[,'delayed_resp'] == del_resp
+          if (!any(resp_index)) {
+            break
+          }
+
+          cutpoints <- data$value[resp_index]
+          cutpoints[length(cutpoints)] <- Inf
+            
+          for (i in 1:length(cutpoints)) {
+            rt <- cutpoints[i]
+            p_cut <- sum(sim_data[matching_sim_responses, 'RT'] <= rt)
+            p[insert_at] <- p_cut
+            insert_at <- insert_at + 1
+          }
+          first <- insert_at-length(cutpoints)
+          last <- insert_at - 1
+          p[first:last] <- c(p[first], diff(p[first:last]))
+        }
+      }
+      
+      log_likelihood <- log_likelihood + dmultinom(x = bin_counts,
+                                             size = sum(bin_counts),
+                                             prob = p/Nsim,
+                                             log = TRUE)
+      if (is.infinite(log_likelihood)) {
+        return(1e9)
+      }
+    }
+  }
+
+  return(-log_likelihood)
+
+}
+```
+
+```{r load_data}
+load(file.path(root_dir, "data", "SvDPRec.Rdata"))
+test <- select(test, -list)
+```
+
+```{r observed_RT_choice_data}
+# Very likely to have implicit missing cells
+joint_quantiles <- filter(test, !is.na(type)) %>%
+  filter(speeded_RT > 200) %>%
+  mutate(speeded_RT = speeded_RT/1000) %>%
+  group_by(subject, strength, speeded_judgment, pOld, delayed_judgment) %>%
+  filter(n() >= 5) %>%
+  summarise(quintiles = list(
+              data.frame(quantile = c("10%", "30%", "50%", "70%", "90%", "100%"),
+                         value = quantile(speeded_RT, c(.1, .3, .5, .7, .9, 1)),
+                         bin_counts = ceiling(n() * c(.1, .2, .2, .2, .2, .1)),
+                         stringsAsFactors = FALSE)
+              )) %>%
+  ungroup() %>%
+  unnest()
+```
+
+```{r starting_params}
+starting_parameters <- data.frame(
+  subject = c("101", "102", "103", "104", "105",  "106", "107", "108", "109", "110", "111", "112", "113", "114"),
+  v.L = c(-1.63121039355824, -0.283507477794671, -2.26671266011435, -0.885242035963014, 0.333224880383639,
+          -1.46540158689529, -2.07359217312612, -0.267762785273616, -0.302672648487985, -1.70287734540194,
+          -2.81638241484255, -1.32240375265649, -1.19355761265911, -1.45974483919187),
+  sv.L = c(1.36897741812391,  1.48128767991454, 1.68963719900419, 0.838550131196593, 0.943155001593111, 
+           1.15290254844532, 1.53090660715038, 0.804699742326526, 0.915748929919411, 1.10292240491068,
+           1.59432382068662, 1.38775041653477, 1.12432396791311,1.59966791910262),
+  v.W = c(0.292906509864435, 0.67980997703997,0.872845880075899, 0.43846443083022, 0.872017976174179, 
+          0.523364599223161, 0.443395238092382, 1.05501672224955, 1.19332149824044, -0.324283359791045,
+          0.187327470959825, 0.668504261432137, 0.634768550464919, 0.273290975133949),
+  v.S = c(2.50810125012528, 1.40211637198292, 2.80214441292435, 1.30592847408844, 1.76850078170326,
+          2.43760264742353, 2.28020572205158, 1.87359407259286, 2.13167197131775, 1.19685075963698,
+          3.53464395680408, 2.91096513698503, 2.18161609530665, 1.89593722196621),
+  sv.T = c(2.25489575504578, 1.25834576246496, 2.4030678846544, 0.930582400648195, 0.869752780652033,
+           1.77587457117814, 2.39125984473205, 0.800977619002408, 0.958420039072643, 1.2524983966491,
+           3.18864764137323, 1.81162142670435, 0.943741633353921, 2.32349556514988),
+  a = c(0.99797323294511, 1.25038812668227, 0.77032551806279, 1.56622919805161, 0.897354921365819,
+        1.30439159357645,  1.22665134127444, 0.84588452757116, 1.03334424054952, 0.86374875923222,
+        1.0020817885224, 1.27945129431954, 1.20613455657835, 1.08146985379482),
+  z = c(0.616529425315952, 0.606537119133376, 0.671705186191291,0.517231715412233, 0.704500344718758,
+        0.562523986993911, 0.573188838792017, 0.5, 0.554992587860338, 0.637976072105278, 0.710782032468964,
+        0.634168983338395, 0.5, 0.646018213159831),
+  t0 = c(0.341622978279367, 0.361036343295214, 0.373212545762405, 0.411830817546723, 0.244879414712493,
+         0.297689399370278, 0.438218431094937, 0.414130959450038, 0.405441922250896, 0.334612563186471,
+         0.431737941848642, 0.434369912216913, 0.5, 0.293539506814451),
+  st0 = c(0.185275995691154, 0.248790754939739, 0.163536953905423, 0.0124560032710302, 0.290043633451719,
+          0.266064650550504, 0.224812704613056, 0.0197721918655906, 0.0910655475843301, 0.220328267712677,
+          0.101812084114822, 0.172519757567362, 0.039642942839019, 0.268292496195088),
+  crit.C = c(1.2907588437089, 0.637709508598267, 1.23247407297795, 1.41368424563134, 1.26506692996138,
+             1.26084071294953, 1.61448207779251, 1.30719897964559, 1.2708851611957, 1.4537506455125,
+             1.4251842911619, 0.754321788846873, 1.51607545950232, 1.35118936834305),
+  crit.N = c(0.798352776076556, 0.217091670834747, 0.668653053404565, 0.993911995067497, -0.397289393662498,
+             0.870245876766408, 0.793554487604585, 1.00787842269599, 1.00380696723534, 0.999829014903577,
+             0.975262730260513, 0.70242313064345, 1.10418129715532, 0.72127814811724),
+  crit.L = c(0.259510567270418, 0.00464828263955727, -0.00333785584524782, 0.667041947634623, -1.18643214195213,
+             0.555688380428885, 0.313683113556838, 0.707466887559655, 0.733940316278341, 0.828855469782543,
+             0.205770808927446, 0.611497685639545, 0.901498157206505, -0.119952020948429)
+  )
+```
+
+```{r start_cluster}
+cl <- parallel::makeCluster(parallel::detectCores(),
+                            outfile = "",
+                            methods = FALSE)
+doParallel::registerDoParallel(cl)
+```
+
+```{r fit, cache=TRUE, dependson=c("diffusion_functions")}
+subjectwise_datalist <- Map(function(x,y) { list("data"=x, "parameters"=y) },
+                            split(joint_quantiles, joint_quantiles$subject),
+                            split(starting_parameters, starting_parameters$subject)
+                            )
+
+diffusion_fits <- foreach(sub = subjectwise_datalist, .packages = c("optimx")) %dopar% {
+
+    # Code "new" responses as 0 (lower boundary) and "old" responses as 1 (upper boundary)
+    # This will be useful inside the objective function
+    sub$data$speeded_boundary <- -1 + as.numeric(factor(sub$data$speeded_judgment,
+                                                        levels = c('n', 'o'),
+                                                        labels = c("lower", 'upper')
+                                                        )
+                                                 )
+    sub$data$delayed_boundary <- -1 + as.numeric(factor(sub$data$delayed_judgment,
+                                                        levels = c('n', 'o'),
+                                                        labels = c("lower", 'upper')
+                                                        )
+                                                 )
+    # Label bias conditions as conservative, neutral and liberal
+    # This will make it easier to match up with parameters inside the objective function
+    sub$data$bias <- factor(sub$data$pOld, labels = c("C","N","L"))
+    
+    # Extract & order paramter vector for optimization
+    parameters <- unlist(sub$parameters)
+    parameters <- parameters[c("v.L", "sv.L", "v.W", "v.S", "sv.T", "a", "z", "t0", "st0", "crit.C", "crit.N", "crit.L")]
+    
+    fit <- optimx(parameters,
+                  fn = diffusion_obj,
+                  method = c("L-BFGS-B"), 
+                  itnmax = 3000,
+                  lower = c(-5, 0.1, -5, -5, 0.1, 0.01, .05, .01, .01, -3, -3, -3),
+                  upper = c(5,  4,    5,  5, 4,   3,    .95, .5,  .5,   3,  3,  3),
+                  control = list(kkt=FALSE),
+                  data = sub$data)
+    fit$subject <- sub$data$subject[1]
+    fit
+  }
+
+```
