@@ -40,7 +40,7 @@ diffusion_SDT_sim <- function(N, a, v, t0, z, sv, st0, sz=0, s=1, crit_old=-0.5,
 
   above_crit_o <- evidence > crit_old
   above_crit_n <- evidence > crit_new
-  said_old <- sim_data[i, "speeded_resp"] == 1
+  said_old <- sim_data[, "speeded_resp"] == 1
   sim_data[above_crit_o & said_old, "delayed_resp"] <- 1
   sim_data[above_crit_n & !said_old, "delayed_resp"] <- 1
 
