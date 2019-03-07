@@ -6,6 +6,7 @@
 using namespace Rcpp;
 static Ziggurat::Ziggurat::Ziggurat zigg;
 
+// [[Rcpp::export]]
 void zigg_seed(unsigned long int s) {
   zigg.setSeed(s);
   return;
