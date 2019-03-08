@@ -218,3 +218,42 @@ diffusion_fits <- foreach(sub = subjectwise_datalist, .packages = c("optimx")) %
   }
 
 ```
+
+```{r QP_data}
+cell_proportions <- filter(test, !is.na(type)) %>%
+  filter(speeded_RT > 200) %>%
+  mutate(speeded_RT = speeded_RT/1000) %>%
+  group_by(subject, strength, pOld, speeded_judgment, delayed_judgment) %>%
+  filter(n() >= 5) %>%
+  summarise(N = n()) %>%
+  group_by(subject, strength, pOld) %>%
+  mutate(p = N/sum(N))
+
+sub_conditional_quantiles <- filter(joint_quantiles, quantile != "100%") %>%
+  mutate(quantile = as.numeric(sub("%", "", quantile, fixed = TRUE))/100) %>%
+  rename(RT = value) %>%
+  left_join(cell_proportions,
+            by=c("subject", "strength", "pOld", "speeded_judgment", "delayed_judgment")) %>%
+    mutate(quantile = quantile * p)
+
+avg_conditional_quantiles <- group_by(sub_conditional_quantiles,
+                                      strength, pOld, speeded_judgment, delayed_judgment, quantile) %>%
+  summarise_at(c("RT","p"), mean) %>%
+  ungroup() %>%
+  mutate(quantile = quantile * p) %>%
+  select(-p)
+```
+
+```{r QP_plots, fig.width=12, fig.height=90}
+ggplot(sub_conditional_quantiles,
+       aes(x=RT, y=quantile, color=speeded_judgment, linetype=delayed_judgment)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~subject + pOld + strength , ncol=3,
+             labeller = labeller(.cols=label_both, .multi_line = FALSE)) +
+  scale_linetype_discrete("Delayed Test Response", labels=c("New", "Old")) +
+  scale_color_discrete("Speeded Test Response", labels=c("New", "Old")) +
+  theme_gray(base_size = 14) +
+  theme(legend.position = "top")
+```
+
