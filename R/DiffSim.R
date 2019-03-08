@@ -1,4 +1,4 @@
-diffusion_SDT_sim <- function(N, a, v, t0, z, sv, st0, sz=0, s=1, crit_old=-0.5, crit_new=0.5) {
+diffusion_SDT_sim <- function(N, a, v, t0, z, sv, st0, sz=0, s=1, crit) {
 
   z <- z*a # convert relative starting point to absolute
   dt <- .001 # time step size
@@ -38,8 +38,8 @@ diffusion_SDT_sim <- function(N, a, v, t0, z, sv, st0, sz=0, s=1, crit_old=-0.5,
 
   sim_data[, "RT"] <- NDT + sim_data[, "RT"]*dt # convert steps to RT
 
-  above_crit_o <- evidence > crit_old
-  above_crit_n <- evidence > crit_new
+  above_crit_o <- evidence > crit[1]
+  above_crit_n <- evidence > crit[2]
   said_old <- sim_data[, "speeded_resp"] == 1
   sim_data[above_crit_o & said_old, "delayed_resp"] <- 1
   sim_data[above_crit_n & !said_old, "delayed_resp"] <- 1
