@@ -23,7 +23,7 @@ NumericMatrix diffusion_SDT_sim(int N, double a, double v, double t0,
   z = z * a; // convert relative starting point to absolute
   double dt = .001; // timestep size
   // 
-  NumericVector NDT = runif(N, t0 - st0/2, t0 + st0/2); // non-decision_times
+  NumericVector NDT = runif(N, t0, t0 + st0); // non-decision_times
   NumericVector evidence = rnorm(N, v, sv); // Sample SDT evidence strengths \ drift rates
   NumericVector drifts = evidence * dt; // Sample sampled evidence scale to instantaneous drift
   // 
