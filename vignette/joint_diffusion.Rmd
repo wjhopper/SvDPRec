@@ -23,6 +23,7 @@ library(rtdists)
 library(ggplot2)
 library(dplyr)
 library(tidyr)
+library(RcppZiggurat)
 root_dir <- rprojroot::is_rstudio_project$find_file()
 ```
 
@@ -205,7 +206,8 @@ starting_parameters <- data.frame(
          crit_new.C = crit.C,
          crit_new.N = crit.N,
          crit_new.L = crit.L
-         )
+         ) %>%
+  select(-crit.C, -crit.N, -crit.L)
 ```
 
 ```{r fit, cache=TRUE, dependson=c("diffusion_functions")}
@@ -262,7 +264,7 @@ diffusion_fits <- foreach(sub = subjectwise_datalist,
       }
       fit <- optimx(parameters,
                     fn = diffusion_obj,
-                    method = c("L-BFGS-B", "nlminb"),
+                    method = c("L-BFGS-B"),
                     itnmax = 1000,
                     lower = c(-5, 0.1, -5, -5, 0.1, 0.01, .05, .01, .01, -3, -3, -3, -3, -3, -3),
                     upper = c(5,  4,    5,  5, 4,   3,    .95, .5,  .5,   3,  3,  3, 3,  3,  3),
@@ -281,12 +283,19 @@ diffusion_fits <- foreach(sub = subjectwise_datalist,
 
 parallel::stopCluster(cl)
 
-GOF <- bind_rows(diffusion_fits) %>%
-  select(subject, niter, convcode, value)
+diffusion_fits <- lapply(diffusion_fits, tibble::rownames_to_column, var="method") %>%
+  bind_rows() %>%
+  group_by(subject) %>%
+  filter(value==min(value)) %>%
+  slice(1) %>%
+  ungroup()
 
-parameters <- bind_rows(diffusion_fits) %>%
-  select("subject", "v.L", "sv.L", "v.W", "v.S", "sv.T", "a", "z", "t0", "st0",
-         "crit_old.C", "crit_old.N", "crit_old.L", "crit_new.C", "crit_new.N", "crit_new.L")
+GOF <- select(diffusion_fits, subject, niter, convcode, value)
+
+parameters <- select(diffusion_fits, !!!names(starting_parameters))
+
+rm(subjectwise_datalist, cl)
+invisible(gc(verbose = FALSE))
 ```
 
 ```{r tidy_params, cache=TRUE, dependson='fit'}
@@ -312,9 +321,11 @@ conditionwise_params <- full_join(drift, criterion, by="subject") %>%
 ```
 
 ```{r predictions}
-simulations <- rowwise(conditionwise_params) %>%
+sourceCpp(file.path(root_dir, "src", "diffusion.cpp"),
+            cacheDir = libdir)
+simulated_counts <- rowwise(conditionwise_params) %>%
   do({
-    zigg_seed(1234)
+    RcppZiggurat::zsetseed(1234)
     sim <- diffusion_SDT_sim(N=1e4, a = .$a, z = .$z, t0 = .$t0, st0 = .$st0,
                              v = .$v, sv = .$sv, crit = c(.$crit_old, .$crit_new)
                              )
@@ -322,20 +333,21 @@ simulations <- rowwise(conditionwise_params) %>%
 
     proportions <- group_by(sim, speeded_resp, delayed_resp) %>%
       summarise(N = n()) %>%
-      ungroup() %>%
-      mutate(p=N/sum(N)) %>%
-      select(-N)
-
-    quantiles <- group_by(sim, speeded_resp, delayed_resp) %>%
+      ungroup()
+    
+    quantiles <- group_by(sim, speeded_resp) %>%
       summarise(quintiles = list(
                 data.frame(quantile = c("10%", "30%", "50%", "70%", "90%", "100%"),
                            value = quantile(RT, c(.1, .3, .5, .7, .9, 1)),
-                           bin_counts = ceiling(n() * c(.1, .2, .2, .2, .2, .1)),
                            stringsAsFactors = FALSE)
               )) %>%
-      ungroup()
-
-    X <- full_join(proportions, quantiles, by=c("speeded_resp", "delayed_resp"))
+      ungroup() %>%
+      unnest()
+    
+    X <- full_join(proportions, quantiles, by="speeded_resp") %>%
+      mutate(bin_counts = ceiling(N*c(.1, .2, .2, .2, .2, .1))) %>%
+      select(-N)
+    
     X$subject <- .$subject
     X$strength <- .$strength
     X$pOld <- .$pOld
@@ -344,46 +356,69 @@ simulations <- rowwise(conditionwise_params) %>%
   unnest() %>%
   mutate(speeded_judgment = c("n","o")[speeded_resp+1],
          delayed_judgment = c("n","o")[delayed_resp+1]) %>%
-  select(subject, strength, pOld, speeded_judgment, delayed_judgment, quantile, RT = value, bin_counts, p)
+  select(subject, strength, pOld, speeded_judgment, delayed_judgment, quantile, value, bin_counts)
+
+# Get rid of experimental condition/joint response combinations that weren't fit due to low cell counts
+simulated_counts <- semi_join(simulated_counts, joint_counts,
+                              by=c("subject","strength","pOld","speeded_judgment","delayed_judgment"))
 
 ```
 
 ```{r QP_data}
-cell_proportions <- filter(test, !is.na(type)) %>%
-  filter(speeded_RT > 200) %>%
-  mutate(speeded_RT = speeded_RT/1000) %>%
-  group_by(subject, strength, pOld, speeded_judgment, delayed_judgment) %>%
-  filter(n() >= 6) %>%
-  summarise(N = n()) %>%
-  group_by(subject, strength, pOld) %>%
+cell_proportions <- bind_rows(observed = joint_counts, model = simulated_counts,
+                              .id="type") %>%
+  group_by(subject, type, strength, pOld, speeded_judgment, delayed_judgment) %>%
+  summarise(N = sum(bin_counts)) %>%
+  group_by(subject, type, strength, pOld) %>%
   mutate(p = N/sum(N)) %>%
   select(-N)
 
-sub_conditional_quantiles <- filter(joint_quantiles, quantile != "100%") %>%
+quantiles <- bind_rows(observed = joint_counts, model = simulated_counts,
+                       .id="type") %>%
+  filter(quantile != "100%") %>%
   mutate(quantile = as.numeric(sub("%", "", quantile, fixed = TRUE))/100) %>%
-  rename(RT = value) %>%
-  left_join(cell_proportions,
-            by=c("subject", "strength", "pOld", "speeded_judgment", "delayed_judgment")) %>%
-  mutate(quantile = quantile * p) %>%
-  select(subject, strength, pOld, speeded_judgment, delayed_judgment, quantile, RT, bin_counts, p)
-
-avg_conditional_quantiles <- group_by(sub_conditional_quantiles,
-                                      strength, pOld, speeded_judgment, delayed_judgment, quantile) %>%
-  summarise_at(c("RT","p"), mean) %>%
-  ungroup() %>%
-  mutate(quantile = quantile * p)
+  rename(RT = value)
 ```
 
-```{r QP_plots, fig.width=12, fig.height=90}
-ggplot(sub_conditional_quantiles,
-       aes(x=RT, y=quantile, color=speeded_judgment, linetype=delayed_judgment)) +
-  geom_line() +
-  geom_point() +
-  facet_wrap(~subject + pOld + strength , ncol=3,
-             labeller = labeller(.cols=label_both, .multi_line = FALSE)) +
-  scale_linetype_discrete("Delayed Test Response", labels=c("New", "Old")) +
-  scale_color_discrete("Speeded Test Response", labels=c("New", "Old")) +
-  theme_gray(base_size = 14) +
-  theme(legend.position = "top")
+```{r plots, dev='svg', results="asis", fig.width=8,fig.height=8.5}
+for (s in GOF$subject) {
+  
+  cat(sprintf("<h3>Subject %s</h3>", s))
+  
+  subject_params <- filter(conditionwise_params, subject == s) %>%
+    mutate(strength = factor(strength, levels = c("L", "W", "S"))) %>%
+    arrange(strength)
+  subject_GOF <- filter(GOF, subject == s)
+  
+  kable(subject_params, digits = 3) %>%
+    kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+    column_spec(1:2, bold=TRUE) %>%
+    collapse_rows(c(1:11)) %>%
+    print()
+  
+  kable(subject_GOF, digits = 3) %>%
+    kableExtra::kable_styling(full_width = FALSE, position = "float_right") %>%
+    print()
+  
+  acc_plot <- ggplot(filter(cell_proportions, subject==s),
+                     aes(x=type, y=p, fill=interaction(speeded_judgment, delayed_judgment))) +
+    geom_bar(stat='identity') +
+    facet_grid(strength ~ pOld,
+               labeller = labeller(pOld = as_labeller(
+                                   c("0.25" = "Liberal",
+                                     "0.5" = "Neutral",
+                                     "0.75" = "Conservative")
+                                     ),
+                                   strength = as_labeller(
+                                     c("L" = "Lure",
+                                       "S" = "Strong Target",
+                                       "W" = "Weak Target")
+                                     )
+                                   )) +
+    scale_fill_discrete("Joint Responses",
+                        labels=c("n.n"="New, New", "o.n"="Old, New",
+                                 "n.o"="New, Old", "o.o"="Old, Old")) +
+    theme(legend.position = "top")
+  print(acc_plot)
+}
 ```
-
