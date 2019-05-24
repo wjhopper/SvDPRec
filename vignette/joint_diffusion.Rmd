@@ -65,9 +65,7 @@ diffusion_obj <- function(theta, data, fixed=NULL, scale=FALSE){
       sv <- if (strength == "L") { parameters["sv.L"] } else { parameters["sv.T"] }
 
       condition_index <- data$strength==strength & data$bias == bias
-      if (!any(condition_index)) {
-        break
-      }
+
       bin_counts <- data$bin_counts[condition_index]
       p <- numeric(sum(condition_index))
 
@@ -84,25 +82,24 @@ diffusion_obj <- function(theta, data, fixed=NULL, scale=FALSE){
 
           resp_index <- condition_index &
                         data$speeded_boundary == sp_resp &
-                        data$delayed_boundary== del_resp
-          matching_sim_responses <- sim_data[,'speeded_resp'] == sp_resp &
-                                    sim_data[,'delayed_resp'] == del_resp
-          if (!any(resp_index)) {
-            break
+                        data$delayed_boundary == del_resp
+          # Only proceed if this isn't a missing cell
+          if (any(resp_index)) {
+            matching_sim_responses <- sim_data[,'speeded_resp'] == sp_resp &
+                                      sim_data[,'delayed_resp'] == del_resp
+            cutpoints <- data$value[resp_index]
+            cutpoints[length(cutpoints)] <- Inf
+            
+            for (i in 1:length(cutpoints)) {
+              rt <- cutpoints[i]
+              p_cut <- sum(sim_data[matching_sim_responses, 'RT'] <= rt)
+              p[insert_at] <- p_cut
+              insert_at <- insert_at + 1
+            }
+            first <- insert_at-length(cutpoints)
+            last <- insert_at - 1
+            p[first:last] <- c(p[first], diff(p[first:last]))
           }
-
-          cutpoints <- data$value[resp_index]
-          cutpoints[length(cutpoints)] <- Inf
-
-          for (i in 1:length(cutpoints)) {
-            rt <- cutpoints[i]
-            p_cut <- sum(sim_data[matching_sim_responses, 'RT'] <= rt)
-            p[insert_at] <- p_cut
-            insert_at <- insert_at + 1
-          }
-          first <- insert_at-length(cutpoints)
-          last <- insert_at - 1
-          p[first:last] <- c(p[first], diff(p[first:last]))
         }
       }
 
