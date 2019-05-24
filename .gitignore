@@ -6,3 +6,4 @@ vignette/*_cache/
 vignette/*_files
 *.html
 *.rds
+src/libs/
