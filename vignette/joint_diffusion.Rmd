@@ -219,9 +219,10 @@ subjectwise_datalist <- Map(function(x,y) { list("data"=x, "parameters"=y) },
                             split(starting_parameters, starting_parameters$subject)
                             )
 
-zigg_seed(1234)
-
-diffusion_fits <- foreach(sub = subjectwise_datalist, .packages = c("optimx", "Rcpp")) %dopar% {
+diffusion_fits <- foreach(sub = subjectwise_datalist,
+                          .packages = c("optimx", "Rcpp"),
+                          .noexport = c("diffusion_SDT_sim", "zigg_seed", "joint_counts",
+                                        "starting_params", "test")) %dopar% {
 
     # Code "new" responses as 0 (lower boundary) and "old" responses as 1 (upper boundary)
     # This will be useful inside the objective function
