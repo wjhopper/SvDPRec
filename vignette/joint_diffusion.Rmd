@@ -8,11 +8,14 @@ output:
     toc_depth: 3
 editor_options: 
   chunk_output_type: console
+params:
+  use_cpp: TRUE
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
 library(rprojroot)
+library(Rcpp)
 library(kableExtra)
 library(optimx)
 library(foreach)
@@ -33,7 +36,13 @@ img {
 ```
 
 ```{r diffusion_functions, cache=TRUE}
-source(file.path(root_dir, "R", "DiffSim.R"))
+
+if (params$use_cpp) {
+  sourceCpp(file.path(root_dir, "src", "diffusion.cpp"))
+} else {
+  source(file.path(root_dir, "R", "DiffSim.R"))
+}
+
 
 diffusion_obj <- function(theta, data, fixed=NULL, scale=FALSE){
 
