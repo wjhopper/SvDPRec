@@ -56,9 +56,9 @@ diffusion_obj <- function(theta, data, fixed=NULL, scale=FALSE){
   
   for (strength in all_strengths) {
     for (bias in biases) {
-      
+
       sv <- if (strength == "L") { parameters["sv.L"] } else { parameters["sv.T"] }
-      
+
       condition_index <- data$strength==strength & data$bias == bias
       if (!any(condition_index)) {
         break
@@ -69,8 +69,9 @@ diffusion_obj <- function(theta, data, fixed=NULL, scale=FALSE){
       sim_data <- diffusion_SDT_sim(N=Nsim, a = theta["a"], z = theta['z'],
                                     v = theta[paste0("v.", strength)], sv = sv,
                                     t0 = theta["t0"], st0 = theta["st0"],
-                                    crit_old = theta[paste0("crit.", bias)],
-                                    crit_new = theta[paste0("crit.", bias)])
+                                    crit = c(theta[paste0("crit_old.", bias)],
+                                             theta[paste0("crit_new.", bias)])
+                                    )
 
       insert_at = 1
       for (sp_resp in boundaries) {
@@ -87,7 +88,7 @@ diffusion_obj <- function(theta, data, fixed=NULL, scale=FALSE){
 
           cutpoints <- data$value[resp_index]
           cutpoints[length(cutpoints)] <- Inf
-            
+
           for (i in 1:length(cutpoints)) {
             rt <- cutpoints[i]
             p_cut <- sum(sim_data[matching_sim_responses, 'RT'] <= rt)
@@ -176,7 +177,14 @@ starting_parameters <- data.frame(
   crit.L = c(0.259510567270418, 0.00464828263955727, -0.00333785584524782, 0.667041947634623, -1.18643214195213,
              0.555688380428885, 0.313683113556838, 0.707466887559655, 0.733940316278341, 0.828855469782543,
              0.205770808927446, 0.611497685639545, 0.901498157206505, -0.119952020948429)
-  )
+  ) %>%
+  mutate(crit_old.C = crit.C,
+         crit_old.N = crit.N,
+         crit_old.L = crit.L,
+         crit_new.C = crit.C,
+         crit_new.N = crit.N,
+         crit_new.L = crit.L
+         )
 ```
 
 ```{r start_cluster}
@@ -212,14 +220,15 @@ diffusion_fits <- foreach(sub = subjectwise_datalist, .packages = c("optimx")) %
     
     # Extract & order paramter vector for optimization
     parameters <- unlist(sub$parameters)
-    parameters <- parameters[c("v.L", "sv.L", "v.W", "v.S", "sv.T", "a", "z", "t0", "st0", "crit.C", "crit.N", "crit.L")]
+    parameters <- parameters[c("v.L", "sv.L", "v.W", "v.S", "sv.T", "a", "z", "t0", "st0",
+                               "crit_old.C", "crit_old.N", "crit_old.L", "crit_new.C", "crit_new.N", "crit_new.L"))]
     
     fit <- optimx(parameters,
                   fn = diffusion_obj,
                   method = c("L-BFGS-B"), 
-                  itnmax = 3000,
-                  lower = c(-5, 0.1, -5, -5, 0.1, 0.01, .05, .01, .01, -3, -3, -3),
-                  upper = c(5,  4,    5,  5, 4,   3,    .95, .5,  .5,   3,  3,  3),
+                  itnmax = 0,
+                  lower = c(-5, 0.1, -5, -5, 0.1, 0.01, .05, .01, .01, -3, -3, -3, -3, -3, -3),
+                  upper = c(5,  4,    5,  5, 4,   3,    .95, .5,  .5,   3,  3,  3, 3,  3,  3),
                   control = list(kkt=FALSE),
                   data = sub$data)
     fit$subject <- sub$data$subject[1]
