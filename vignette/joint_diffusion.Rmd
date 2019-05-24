@@ -100,14 +100,15 @@ diffusion_obj <- function(theta, data, fixed=NULL, scale=FALSE){
           p[first:last] <- c(p[first], diff(p[first:last]))
         }
       }
-      
-      log_likelihood <- log_likelihood + dmultinom(x = bin_counts,
-                                             size = sum(bin_counts),
-                                             prob = p/Nsim,
-                                             log = TRUE)
-      if (is.infinite(log_likelihood)) {
+
+      if (any(p==0)) {
         return(1e9)
       }
+
+      log_likelihood <- log_likelihood + dmultinom(x = bin_counts,
+                                                   size = sum(bin_counts),
+                                                   prob = p / Nsim,
+                                                   log = TRUE)
     }
   }
 
