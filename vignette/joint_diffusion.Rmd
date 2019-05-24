@@ -240,24 +240,42 @@ diffusion_fits <- foreach(sub = subjectwise_datalist,
     # This will make it easier to match up with parameters inside the objective function
     sub$data$bias <- factor(sub$data$pOld, labels = c("C","N","L"))
     
-    # Extract & order paramter vector for optimization
-    parameters <- unlist(sub$parameters)
-    parameters <- parameters[c("v.L", "sv.L", "v.W", "v.S", "sv.T", "a", "z", "t0", "st0",
-                               "crit_old.C", "crit_old.N", "crit_old.L", "crit_new.C", "crit_new.N", "crit_new.L")
-                             ]
-
-    fit <- optimx(parameters,
-                  fn = diffusion_obj,
-                  method = c("L-BFGS-B"), 
-                  itnmax = 0,
-                  lower = c(-5, 0.1, -5, -5, 0.1, 0.01, .05, .01, .01, -3, -3, -3, -3, -3, -3),
-                  upper = c(5,  4,    5,  5, 4,   3,    .95, .5,  .5,   3,  3,  3, 3,  3,  3),
-                  control = list(kkt=FALSE),
-                  data = sub$data)
-    fit$subject <- sub$data$subject[1]
-    if (fit$value == 1e9) {
-      fit$value <- Inf
+    if (params$use_cpp) {
+      sourceCpp(file.path(root_dir, "src", "diffusion.cpp"))
+      zigg_seed(as.integer(sub$data$subject[1]))
+    } else {
+      set.seed(as.integer(sub$data$subject[1]))
     }
+
+    value <- Inf
+    n <- 1
+    while (value == Inf & n < 100) {
+      print(n)
+      # Extract & order paramter vector for optimization
+      parameters <- unlist(sub$parameters[c("v.L", "sv.L", "v.W", "v.S", "sv.T", "a", "z",
+                                            "t0", "st0", "crit_old.C", "crit_old.N", "crit_old.L",
+                                            "crit_new.C", "crit_new.N", "crit_new.L")
+                                          ]
+                           )
+      if (n > 1) {
+        parameters[c("v.L","v.W","v.S")] <- parameters[c("v.L","v.W","v.S")] + runif(3, -1, 1)
+      }
+      fit <- optimx(parameters,
+                    fn = diffusion_obj,
+                    method = c("L-BFGS-B", "nlminb"),
+                    itnmax = 1000,
+                    lower = c(-5, 0.1, -5, -5, 0.1, 0.01, .05, .01, .01, -3, -3, -3, -3, -3, -3),
+                    upper = c(5,  4,    5,  5, 4,   3,    .95, .5,  .5,   3,  3,  3, 3,  3,  3),
+                    control = list(kkt=FALSE, follow.on=FALSE, maxit=1000),
+                    data = sub$data)
+      if (fit$value == 1e9) {
+        fit$value <- Inf
+      }
+      value <- fit$value
+      n <- n + 1
+    }
+
+    fit$subject <- sub$data$subject[1]
     fit
   }
 
