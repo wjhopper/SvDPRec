@@ -248,37 +248,49 @@ diffusion_fits <- foreach(sub = subjectwise_datalist,
     } else {
       set.seed(as.integer(sub$data$subject[1]))
     }
+    # Extract & order paramter vector for optimization
+    parameters <- unlist(sub$parameters[c("v.L", "sv.L", "v.W", "v.S", "sv.T", "a", "z",
+                                      "t0", "st0", "crit_old.C", "crit_old.N", "crit_old.L",
+                                      "crit_new.C", "crit_new.N", "crit_new.L")
+                                    ]
+                         )
 
-    value <- Inf
+    best_value <- Inf
     n <- 1
-    while (value == Inf & n < 100) {
-      print(n)
-      # Extract & order paramter vector for optimization
-      parameters <- unlist(sub$parameters[c("v.L", "sv.L", "v.W", "v.S", "sv.T", "a", "z",
-                                            "t0", "st0", "crit_old.C", "crit_old.N", "crit_old.L",
-                                            "crit_new.C", "crit_new.N", "crit_new.L")
-                                          ]
-                           )
+    while (n <= 25) {
+      print(sprintf("Subject %s, iteration %i", sub$data$subject[1], n))
       if (n > 1) {
-        parameters[c("v.L","v.W","v.S")] <- parameters[c("v.L","v.W","v.S")] + runif(3, -1, 1)
+        parameters[c("v.L","v.W","v.S")] <- rnorm(3, c(-1, .5, 1.5))
+        parameters[c("crit_old.C", "crit_old.N", "crit_old.L",
+                   "crit_new.C", "crit_new.N", "crit_new.L")] <- 
+          runif(6, c(1, .5, 0, 1, .5, 0), c(1.5, 1, .5, 1.5, 1, .5))
+        parameters[c("sv.L","sv.T")] <- rexp(2, 2)
+        parameters[c("a","z","t0","st0")] <- runif(4, c(.5, .25, 0, 0), c(1, .75, .5, .25))
       }
+
       fit <- optimx(parameters,
                     fn = diffusion_obj,
                     method = c("L-BFGS-B"),
                     itnmax = 1000,
-                    lower = c(-5, 0.1, -5, -5, 0.1, 0.01, .05, .01, .01, -3, -3, -3, -3, -3, -3),
-                    upper = c(5,  4,    5,  5, 4,   3,    .95, .5,  .5,   3,  3,  3, 3,  3,  3),
-                    control = list(kkt=FALSE, follow.on=FALSE, maxit=1000),
+                    lower = c(-6, 0.01, -6, -6, 0.01, 0.01, .01, .01, .01, -4, -4, -4, -4, -4, -4),
+                    upper = c( 6, 5,     6,  6, 5,    4,    .99, .75, .75,  4,  4,  4,  4,  4,  4),
+                    control = list(kkt=FALSE, follow.on=FALSE, maxit=1000,starttests=FALSE),
                     data = sub$data)
-      if (fit$value == 1e9) {
-        fit$value <- Inf
+      if (fit$value < best_value) {
+        best_value <- fit$value
+        best_fit <- fit
       }
       value <- fit$value
       n <- n + 1
     }
-
-    fit$subject <- sub$data$subject[1]
-    fit
+    # If we never improved, just take the last one, it doesn't matter anyway,
+    # we just need an object to save
+    if (best_value == Inf) {
+      best_fit <- fit 
+    }
+    
+    best_fit$subject <- sub$data$subject[1]
+    best_fit
   }
 
 parallel::stopCluster(cl)
