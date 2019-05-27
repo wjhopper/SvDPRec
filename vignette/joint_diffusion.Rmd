@@ -290,7 +290,7 @@ diffusion_fits <- lapply(diffusion_fits, tibble::rownames_to_column, var="method
   slice(1) %>%
   ungroup()
 
-GOF <- select(diffusion_fits, subject, niter, convcode, value)
+GOF <- select(diffusion_fits, subject, fevals, gevals, niter, convcode, value)
 
 parameters <- select(diffusion_fits, !!!names(starting_parameters))
 
@@ -376,7 +376,7 @@ cell_proportions <- bind_rows(observed = joint_counts, model = simulated_counts,
 quantiles <- bind_rows(observed = joint_counts, model = simulated_counts,
                        .id="type") %>%
   filter(quantile != "100%") %>%
-  mutate(quantile = as.numeric(sub("%", "", quantile, fixed = TRUE))/100) %>%
+  # mutate(quantile = as.numeric(sub("%", "", quantile, fixed = TRUE))/100) %>%
   rename(RT = value)
 ```
 
@@ -415,10 +415,46 @@ for (s in GOF$subject) {
                                        "W" = "Weak Target")
                                      )
                                    )) +
+    scale_x_discrete("", labels=c("model"="Diffusion", "observed"="Observed")) +
     scale_fill_discrete("Joint Responses",
                         labels=c("n.n"="New, New", "o.n"="Old, New",
                                  "n.o"="New, Old", "o.o"="Old, Old")) +
+    theme_gray(base_size = 16) +
     theme(legend.position = "top")
+    
   print(acc_plot)
+  
+  quantile_plot <- 
+    ggplot(filter(quantiles, subject == s),
+           aes(x=quantile, y=RT, shape=type,
+               color=interaction(speeded_judgment, delayed_judgment))
+           ) +
+    geom_point(size=2) +
+    geom_line(aes(group=interaction(type,speeded_judgment,delayed_judgment))) +
+    facet_grid(strength ~ pOld,
+               labeller = labeller(pOld = as_labeller(
+                                   c("0.25" = "Liberal",
+                                     "0.5" = "Neutral",
+                                     "0.75" = "Conservative")
+                                     ),
+                                   strength = as_labeller(
+                                     c("L" = "Lure",
+                                       "S" = "Strong Target",
+                                       "W" = "Weak Target")
+                                     )
+                                   )) +
+    scale_color_discrete("Joint Responses",
+                        labels=c("n.n"="New, New", "o.n"="Old, New",
+                                 "n.o"="New, Old", "o.o"="Old, Old")) +
+    scale_shape_manual("",
+                       values = c(16,4),
+                       limits = c("observed", "model"),
+                       labels = c("Observed", "Diffusion")) +
+    scale_y_continuous("RT Quantile Value (s.)") +
+    # guides(color=FALSE, shape=FALSE) +
+    theme_gray(base_size = 16) +
+    theme(legend.position = "top")
+  
+  print(quantile_plot)
 }
 ```
