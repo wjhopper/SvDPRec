@@ -18,7 +18,7 @@ struct Diffusion : public Worker
   double sv;
   double s;
   RVector<double> crit;
-  double dt = .001;
+  double dt;
   dqrng::normal_distribution rnorm;
   
   // constructor
@@ -26,16 +26,14 @@ struct Diffusion : public Worker
             Rcpp::NumericVector NDT,
             Rcpp::NumericVector start_points,
             double a, double v, double sv, double s,
-            Rcpp::NumericVector crit
+            Rcpp::NumericVector crit, double dt
             ) :
-    sim_data(sim_data), NDT(NDT), start_points(start_points), a(a), v(v), sv(sv), s(s), crit(crit)
+    sim_data(sim_data), NDT(NDT), start_points(start_points), a(a), v(v), sv(sv), s(s), crit(crit), dt(dt)
     {}
   
   void operator()(std::size_t begin, std::size_t end) {
     pcg64 rng(42, end);
-    double dt = .001; // timestep size
-    s = sqrt(pow(s, 2.0l) * dt); // scale drift coefficient to instantaneous s.d.
-    
+
     for(std::size_t i = begin; i < end; i++) {
       double evidence = v + rnorm(rng)*sv;  // Sample SDT evidence strength \ drift rate
       double drift = evidence*dt; // Sample sampled evidence scale to instantaneous drift
@@ -71,6 +69,10 @@ Rcpp::NumericVector diffusion_parallel(int N, double a, double v, double t0,
                                        double z, double sv, double st0,
                                        double sz = 0, double s = 1,
                                        NumericVector crit = NumericVector::create(-.5, 5)) {
+  
+  double dt = .001; // timestep size
+  s = sqrt(pow(s, 2.0l) * dt); // scale drift coefficient to instantaneous s.d.
+  
   // allocate the output vector
   NumericMatrix sim_data(N, 3);
   colnames(sim_data) = CharacterVector::create("RT", "speeded_resp","delayed_resp");
@@ -84,7 +86,7 @@ Rcpp::NumericVector diffusion_parallel(int N, double a, double v, double t0,
     // NumericVector z_vector = NumericVector::create(z);
     start_points = rep_len(NumericVector::create(z), N);
   }
-  Diffusion diffusion(sim_data, NDT, start_points, a, v, sv, s, crit);
+  Diffusion diffusion(sim_data, NDT, start_points, a, v, sv, s, crit, dt);
   RcppParallel::parallelFor(0, N, diffusion);
   return sim_data;
 }
