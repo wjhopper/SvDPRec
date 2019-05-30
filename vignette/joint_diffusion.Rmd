@@ -23,7 +23,7 @@ library(rtdists)
 library(ggplot2)
 library(dplyr)
 library(tidyr)
-library(RcppZiggurat)
+library(RcppParallel)
 root_dir <- rprojroot::is_rstudio_project$find_file()
 ```
 
@@ -70,12 +70,12 @@ diffusion_obj <- function(theta, data, fixed=NULL, scale=FALSE){
       bin_counts <- data$bin_counts[condition_index]
       p <- numeric(sum(condition_index))
 
-      sim_data <- diffusion_SDT_sim(N=Nsim, a = theta["a"], z = theta['z'],
-                                    v = theta[paste0("v.", strength)], sv = sv,
-                                    t0 = theta["t0"], st0 = theta["st0"],
-                                    crit = c(theta[paste0("crit_old.", bias)],
-                                             theta[paste0("crit_new.", bias)])
-                                    )
+      sim_data <- diffusion_SDT(N=Nsim, a = theta["a"], z = theta['z'],
+                                v = theta[paste0("v.", strength)], sv = sv,
+                                t0 = theta["t0"], st0 = theta["st0"],
+                                crit = c(theta[paste0("crit_old.", bias)],
+                                         theta[paste0("crit_new.", bias)])
+                                )
 
       insert_at = 1
       for (sp_resp in boundaries) {
@@ -223,7 +223,7 @@ subjectwise_datalist <- Map(function(x,y) { list("data"=x, "parameters"=y) },
 
 diffusion_fits <- foreach(sub = subjectwise_datalist,
                           .packages = c("optimx", "Rcpp"),
-                          .noexport = c("diffusion_SDT_sim", "zigg_seed", "joint_counts",
+                          .noexport = c("diffusion_SDT", "joint_counts",
                                         "starting_params", "test")) %dopar% {
 
     # Code "new" responses as 0 (lower boundary) and "old" responses as 1 (upper boundary)
@@ -244,9 +244,9 @@ diffusion_fits <- foreach(sub = subjectwise_datalist,
     
     if (params$use_cpp) {
       sourceCpp(file.path(root_dir, "src", "diffusion.cpp"))
-      zigg_seed(as.integer(sub$data$subject[1]))
+      RcppParallel::setThreadOptions(1)
     } else {
-      set.seed(as.integer(sub$data$subject[1]))
+      source(file.path(root_dir, "R", "DiffSim.R"))
     }
     # Extract & order paramter vector for optimization
     parameters <- unlist(sub$parameters[c("v.L", "sv.L", "v.W", "v.S", "sv.T", "a", "z",
@@ -337,10 +337,10 @@ sourceCpp(file.path(root_dir, "src", "diffusion.cpp"),
             cacheDir = libdir)
 simulated_counts <- rowwise(conditionwise_params) %>%
   do({
-    RcppZiggurat::zsetseed(1234)
-    sim <- diffusion_SDT_sim(N=1e4, a = .$a, z = .$z, t0 = .$t0, st0 = .$st0,
-                             v = .$v, sv = .$sv, crit = c(.$crit_old, .$crit_new)
-                             )
+
+    sim <- diffusion_SDT(N=1e4, a = .$a, z = .$z, t0 = .$t0, st0 = .$st0,
+                         v = .$v, sv = .$sv, crit = c(.$crit_old, .$crit_new)
+                         )
     sim <- as.data.frame(sim)
 
     proportions <- group_by(sim, speeded_resp, delayed_resp) %>%
