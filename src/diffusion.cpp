@@ -2,10 +2,22 @@
 // [[Rcpp::plugins("cpp11")]]
 // [[Rcpp::depends(dqrng)]]
 #include <dqrng.h>
+// [[Rcpp::depends(BH, sitmo)]]
+#include <pcg_random.hpp>
+#include <dqrng_distribution.h>
+// [[Rcpp::depends(RcppParallel)]]
+#include <RcppParallel.h>
+
+// The following diffusion_SDT_sim function is intentially not exported to R.
+// It exists in case the need for some backwards compatibility arises, or if in the future
+// the functionallity to switch between different parallel and serial implementations arises.
+// Currently, the recommended approach to switch between parallel and serial execution is to restrict
+// the RcppParallel library to a single CPU core by calling RcppParallel::setThreadOptions(numThreads = 1)
+// from within the R session when you need serial, and calling RcppParallel::setThreadOptions(numThreads = 'auto')
+// when you want parallelism.
 
 using namespace Rcpp;
 
-// [[Rcpp::export]]
 NumericMatrix diffusion_SDT_sim(int N, double a, double v, double t0,
                                 double z, double sv, double st0,
                                 double sz = 0, double s = 1,
@@ -62,4 +74,107 @@ NumericMatrix diffusion_SDT_sim(int N, double a, double v, double t0,
     }
 
   return(sim_data);
+}
+
+
+// To-do Notes: This following parallel implementation based on the RcppParallel framework
+// currently uses a thread-local instantiation of the PCG pseudo-random number generator
+// with a fixed seed. Currently, the only way to set the prng seed programmatically 
+// would be adding a "seed" argument to the function interfacethat is exported to R, 
+// and then passing this seed on to the constructor for the RcppParallel::Worker
+// derived object. I do not like this idea, it clutters the API for the diffusion model and
+// doesn't divide separate functionallity (seeding the rng) into separate functions. So, I am
+// leaving it with a fixed seed for now.
+//
+// If the need to programmatically seed the prng arises in the future (e.g., from an R session),
+// there are two possible modifications I can envision. First, use a global pcg64 instance,
+// write a function which uses the .seed() method to set the seed, then use this global
+// object in each thread, switching to a thread-specific prng stream with the set_stream() method.
+// Alternatively, the seed could be a global variable, have a function to modify this global value,
+// and then the thread-local pcg64 instances could use this global value as their seed.
+
+using namespace RcppParallel;
+
+struct Diffusion : public Worker
+{   
+  RMatrix<double> sim_data;
+  double a;
+  double v;
+  double t0;
+  double z;
+  double sv;
+  double sz;
+  double st0;
+  double s;
+  RVector<double> crit;
+  double dt;
+  
+  // constructor
+  Diffusion(Rcpp::NumericMatrix sim_data,
+            double a, double v, double t0, double z, double sv, double sz, double st0, double s,
+            Rcpp::NumericVector crit, double dt
+  ) :
+    sim_data(sim_data), a(a), v(v), t0(t0), z(z), sv(sv), sz(sz), st0(st0), s(s), crit(crit), dt(dt)
+  {}
+  
+  void operator()(std::size_t begin, std::size_t end) {
+    pcg64 rng(42, end);
+    
+    dqrng::normal_distribution evidence_dist(v, sv);
+    dqrng::normal_distribution noise(0, s);
+    dqrng::uniform_distribution NDT(t0, t0 + st0);
+    dqrng::uniform_distribution start_points(z-.5*sz, z+.5*sz);
+    
+    for(std::size_t i = begin; i < end; i++) {
+      double evidence = evidence_dist(rng);  // Sample SDT evidence strength \ drift rate
+      double drift = evidence*dt; // Sample sampled evidence scale to instantaneous drift
+      
+      double pos;
+      if (sz > 0) {
+        pos = start_points(rng);
+      } else{
+        pos = z;
+      }
+      
+      int step = 0;
+      while(pos < a && pos > 0 ) {
+        pos += drift + noise(rng);
+        step += 1;
+      }
+      sim_data(i, 0) = NDT(rng) + step*dt; // column 1 = rt
+      
+      if (pos >= a) {
+        sim_data(i, 1) = 1; // column 2 = speeded response
+        if (evidence > crit[0]) {
+          sim_data(i, 2) = 1; // column 3 = delayed response
+        }
+      } else {
+        if (evidence > crit[1]) {
+          sim_data(i, 2) = 1; // column 3 = delayed response
+        }
+      }
+      
+    }
+  }
+};
+
+using namespace Rcpp;
+
+// [[Rcpp::export]]
+Rcpp::NumericVector diffusion_SDT(int N, double a, double v, double t0,
+                                  double z, double sv, double st0,
+                                  double sz = 0, double s = 1,
+                                  NumericVector crit = NumericVector::create(-.5, 5)) {
+  
+  double dt = .001; // timestep size
+  s = sqrt(pow(s, 2.0l) * dt); // scale drift coefficient to instantaneous s.d.
+  z = z * a; // convert relative starting point to absolute
+  
+  // allocate the output vector
+  NumericMatrix sim_data(N, 3);
+  colnames(sim_data) = CharacterVector::create("RT", "speeded_resp","delayed_resp");
+  
+  Diffusion diffusion(sim_data, a, v, t0, z, sz, sv, st0, s, crit, dt);
+  RcppParallel::parallelFor(0, N, diffusion);
+  return sim_data;
 }
