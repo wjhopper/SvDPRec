@@ -19,8 +19,8 @@
 using namespace Rcpp;
 
 NumericMatrix diffusion_SDT_sim(int N, double a, double v, double t0,
-                                double z, double sv, double st0,
-                                double sz = 0, double s = 1,
+                                double z, double sz = 0, double sv = 0,
+                                double st0 = 0, double s = 1,
                                 NumericVector crit = NumericVector::create(-.5, 5)) {
 
   dqrng::dqRNGkind("pcg64");
@@ -31,47 +31,53 @@ NumericMatrix diffusion_SDT_sim(int N, double a, double v, double t0,
   z = z * a; // convert relative starting point to absolute
   double dt = .001; // timestep size
   // 
-  NumericVector NDT = dqrng::dqrunif(N, t0, t0 + st0); // non-decision_times
   NumericVector evidence = dqrng::dqrnorm(N, v, sv); // Sample SDT evidence strengths \ drift rates
   NumericVector drifts = evidence * dt; // Sample sampled evidence scale to instantaneous drift
   // 
   s = sqrt(pow(s, 2.0l) * dt); // scale drift coefficient to instantaneous s.d.
   // 
-  NumericVector start_points;
+  NumericVector start_points(no_init(N));
   if (sz > 0) {
     start_points = dqrng::dqrunif(N, z-.5*sz, z+.5*sz);
   } else {
     start_points = NumericVector(N, z);
   }
   
-    for(int i = 0; i < N; i++) {
-      int step = 0;
-      double pos = start_points[i];
-      double v_inst = drifts[i];
-    
-      while(!(pos > a || pos < 0 )) {
-        step += 1;
-        pos +=  dqrng::rnorm(v_inst, s);
-      }
-    
-      if (pos >= a){
-        sim_data(i, 1) = 1; // column 2 = speeded response
-      }
+  NumericVector NDT(no_init(N)); // non-decision_times
+  if (st0 > 0) {
+    NDT = dqrng::dqrunif(N, t0, t0 + st0);
+  } else {
+    NDT = NumericVector(N, t0);
+  }
   
-      sim_data(i, 0) = step*dt; // column 1 = rt
+  for(int i = 0; i < N; i++) {
+    int step = 0;
+    double pos = start_points[i];
+    double v_inst = drifts[i];
+  
+    while(!(pos > a || pos < 0 )) {
+      step += 1;
+      pos +=  dqrng::rnorm(v_inst, s);
     }
-    
-    sim_data(_, 0) =  NDT + sim_data(_, 0);
   
-    LogicalVector above_crit_o = evidence > crit[0];
-    LogicalVector above_crit_n = evidence > crit[1];
-    LogicalVector said_old = sim_data(_, 1) == 1;
-  
-    for (int j = 0; j < sim_data.nrow(); j++) {
-      if ((above_crit_o[j] && said_old[j]) || (above_crit_n[j] && !said_old[j])) {
-        sim_data(j, 2) = 1;
-      }
+    if (pos >= a){
+      sim_data(i, 1) = 1; // column 2 = speeded response
     }
+
+    sim_data(i, 0) = step*dt; // column 1 = rt
+  }
+    
+  sim_data(_, 0) =  NDT + sim_data(_, 0);
+
+  LogicalVector above_crit_o = evidence > crit[0];
+  LogicalVector above_crit_n = evidence > crit[1];
+  LogicalVector said_old = sim_data(_, 1) == 1;
+
+  for (int j = 0; j < sim_data.nrow(); j++) {
+    if ((above_crit_o[j] && said_old[j]) || (above_crit_n[j] && !said_old[j])) {
+      sim_data(j, 2) = 1;
+    }
+  }
 
   return(sim_data);
 }
@@ -102,8 +108,8 @@ struct Diffusion : public Worker
   double v;
   double t0;
   double z;
-  double sv;
   double sz;
+  double sv;
   double st0;
   double s;
   RVector<double> crit;
@@ -111,10 +117,10 @@ struct Diffusion : public Worker
   
   // constructor
   Diffusion(Rcpp::NumericMatrix sim_data,
-            double a, double v, double t0, double z, double sv, double sz, double st0, double s,
+            double a, double v, double t0, double z, double sz, double sv, double st0, double s,
             Rcpp::NumericVector crit, double dt
   ) :
-    sim_data(sim_data), a(a), v(v), t0(t0), z(z), sv(sv), sz(sz), st0(st0), s(s), crit(crit), dt(dt)
+    sim_data(sim_data), a(a), v(v), t0(t0), z(z), sz(sz), sv(sv), st0(st0), s(s), crit(crit), dt(dt)
   {}
   
   void operator()(std::size_t begin, std::size_t end) {
@@ -135,14 +141,19 @@ struct Diffusion : public Worker
       } else{
         pos = z;
       }
-      
+
       int step = 0;
       while(pos < a && pos > 0 ) {
         pos += drift + noise(rng);
         step += 1;
       }
-      sim_data(i, 0) = NDT(rng) + step*dt; // column 1 = rt
-      
+
+      if (st0 > 0) {
+        sim_data(i, 0) = NDT(rng) + step*dt; // column 1 = rt
+      } else {
+        sim_data(i, 0) = t0 + step*dt; // column 1 = rt
+      }
+
       if (pos >= a) {
         sim_data(i, 1) = 1; // column 2 = speeded response
         if (evidence > crit[0]) {
@@ -162,8 +173,8 @@ using namespace Rcpp;
 
 // [[Rcpp::export]]
 Rcpp::NumericVector diffusion_SDT(int N, double a, double v, double t0,
-                                  double z, double sv, double st0,
-                                  double sz = 0, double s = 1,
+                                  double z, double sz = 0, double sv = 0, 
+                                  double st0 = 0, double s = 1,
                                   NumericVector crit = NumericVector::create(-.5, 5)) {
   
   double dt = .001; // timestep size
