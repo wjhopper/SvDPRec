@@ -82,7 +82,17 @@ NumericMatrix diffusion_SDT_sim(int N, double a, double v, double t0,
   return(sim_data);
 }
 
-
+int nThreads() {
+  // determine max number of threads
+  std::size_t threads = tthread::thread::hardware_concurrency();
+  char* numThreads = ::getenv("RCPP_PARALLEL_NUM_THREADS");
+  if (numThreads != NULL) {
+    int parsedThreads = ::atoi(numThreads);
+    if (parsedThreads > 0)
+      threads = parsedThreads;
+  }
+  return threads;
+}
 // To-do Notes: This following parallel implementation based on the RcppParallel framework
 // currently uses a thread-local instantiation of the PCG pseudo-random number generator
 // with a fixed seed. Currently, the only way to set the prng seed programmatically 
@@ -125,7 +135,7 @@ struct Diffusion : public Worker
   
   void operator()(std::size_t begin, std::size_t end) {
     pcg64 rng(42, end);
-    
+
     dqrng::normal_distribution evidence_dist(v, sv);
     dqrng::normal_distribution noise(0, s);
     dqrng::uniform_distribution NDT(t0, t0 + st0);
@@ -186,6 +196,6 @@ Rcpp::NumericVector diffusion_SDT(int N, double a, double v, double t0,
   colnames(sim_data) = CharacterVector::create("RT", "speeded_resp","delayed_resp");
   
   Diffusion diffusion(sim_data, a, v, t0, z, sz, sv, st0, s, crit, dt);
-  RcppParallel::parallelFor(0, N, diffusion);
+  RcppParallel::parallelFor(0, N, diffusion, N/nThreads());
   return sim_data;
 }
