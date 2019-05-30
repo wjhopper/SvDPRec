@@ -1,40 +1,35 @@
 #include <Rcpp.h>
 // [[Rcpp::plugins("cpp11")]]
-// [[Rcpp::depends(RcppZiggurat)]]
-#include <Ziggurat.h>
+// [[Rcpp::depends(dqrng)]]
+#include <dqrng.h>
 
 using namespace Rcpp;
-static Ziggurat::Ziggurat::Ziggurat zigg;
-
-// [[Rcpp::export]]
-void zigg_seed(unsigned long int s) {
-  zigg.setSeed(s);
-  return;
-}
 
 // [[Rcpp::export]]
 NumericMatrix diffusion_SDT_sim(int N, double a, double v, double t0,
                                 double z, double sv, double st0,
                                 double sz = 0, double s = 1,
                                 NumericVector crit = NumericVector::create(-.5, 5)) {
-  
+
+  dqrng::dqRNGkind("pcg64");
+  dqrng::dqset_seed(42);
+
   NumericMatrix sim_data(N, 3);
   colnames(sim_data) = CharacterVector::create("RT", "speeded_resp","delayed_resp");
   z = z * a; // convert relative starting point to absolute
   double dt = .001; // timestep size
   // 
-  NumericVector NDT = runif(N, t0, t0 + st0); // non-decision_times
-  NumericVector evidence = rnorm(N, v, sv); // Sample SDT evidence strengths \ drift rates
+  NumericVector NDT = dqrng::dqrunif(N, t0, t0 + st0); // non-decision_times
+  NumericVector evidence = dqrng::dqrnorm(N, v, sv); // Sample SDT evidence strengths \ drift rates
   NumericVector drifts = evidence * dt; // Sample sampled evidence scale to instantaneous drift
   // 
-  s = sqrt(pow(s, 2) * dt); // scale drift coefficient to instantaneous s.d.
+  s = sqrt(pow(s, 2.0l) * dt); // scale drift coefficient to instantaneous s.d.
   // 
   NumericVector start_points;
   if (sz > 0) {
-    start_points = runif(N, z-.5*sz, z+.5*sz);
+    start_points = dqrng::dqrunif(N, z-.5*sz, z+.5*sz);
   } else {
-    NumericVector z_vector = NumericVector::create(z);
-    start_points = rep_len(z_vector, N);
+    start_points = NumericVector(N, z);
   }
   
     for(int i = 0; i < N; i++) {
@@ -44,7 +39,7 @@ NumericMatrix diffusion_SDT_sim(int N, double a, double v, double t0,
     
       while(!(pos > a || pos < 0 )) {
         step += 1;
-        pos +=  v_inst + zigg.norm()*s;
+        pos +=  dqrng::rnorm(v_inst, s);
       }
     
       if (pos >= a){
