@@ -24,6 +24,7 @@ library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(RcppParallel)
+library(dqrng)
 root_dir <- rprojroot::is_rstudio_project$find_file()
 ```
 
@@ -211,15 +212,17 @@ starting_parameters <- data.frame(
 ```
 
 ```{r fit, cache=TRUE, dependson=c("diffusion_functions")}
-cl <- parallel::makeCluster(parallel::detectCores(),
-                            outfile = "",
-                            methods = FALSE)
-doParallel::registerDoParallel(cl)
-
 subjectwise_datalist <- Map(function(x,y) { list("data"=x, "parameters"=y) },
                             split(joint_counts, joint_counts$subject),
                             split(starting_parameters, starting_parameters$subject)
                             )
+
+cl <- parallel::makeCluster(min(parallel::detectCores(), length(subjectwise_datalist)),
+                            outfile = "",
+                            methods = FALSE)
+doParallel::registerDoParallel(cl)
+
+RcppParallel::setThreadOptions(floor(parallel::detectCores()/length(cl)))
 
 diffusion_fits <- foreach(sub = subjectwise_datalist,
                           .packages = c("optimx", "Rcpp"),

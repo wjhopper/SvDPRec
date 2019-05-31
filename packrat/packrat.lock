@@ -90,6 +90,11 @@ Version: 0.3.3.4.0
 Hash: 0a294589d5332dfca9b3facc031c9dee
 Requires: Rcpp
 
+Package: RcppParallel
+Source: CRAN
+Version: 4.4.2
+Hash: 4261d1ca961408fddf15d243b652cb2d
+
 Package: Rvmmin
 Source: CRAN
 Version: 2018-4.17
@@ -223,6 +228,12 @@ Version: 0.7.6
 Hash: c3ab15fec1303345fea300dfbc34d995
 Requires: BH, R6, Rcpp, assertthat, bindrcpp, glue, magrittr,
     pkgconfig, plogr, rlang, tibble, tidyselect
+
+Package: dqrng
+Source: CRAN
+Version: 0.2.1
+Hash: 79db7ba98953fb0096497a7c4ea80828
+Requires: BH, Rcpp, sitmo
 
 Package: dygraphs
 Source: CRAN
@@ -663,6 +674,12 @@ Source: CRAN
 Version: 1.1.1
 Hash: d15f59eaa7a9a0668cea3af7f477820c
 Requires: shiny
+
+Package: sitmo
+Source: CRAN
+Version: 2.0.1
+Hash: f94c18bf17c8fdcae57922d55d943552
+Requires: Rcpp
 
 Package: sourcetools
 Source: CRAN
