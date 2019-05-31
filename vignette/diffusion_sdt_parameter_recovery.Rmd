@@ -1,0 +1,146 @@
+---
+title: "Diffusion SDT Parameter Recovery"
+author: "Will Hopper"
+date: "`r format(Sys.Date(), '%b %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
+library(rprojroot)
+library(Rcpp)
+library(kableExtra)
+library(optimx)
+library(foreach)
+library(rtdists)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(RcppParallel)
+library(dqrng)
+root_dir <- rprojroot::is_rstudio_project$find_file()
+```
+
+```{r diffusion}
+libdir <- file.path(root_dir, "src", "libs")
+if (!dir.exists(libdir)) {
+  dir.create(libdir)
+}
+sourceCpp(file.path(root_dir, "src", "diffusion.cpp"),
+          cacheDir = libdir)
+
+diffusion_datasets <- function(N=500) {
+  set.seed(42)
+  parameters <- data.frame(a = runif(N, .5, 1.5),
+                           v = rnorm(N),
+                           sv = rexp(N, 2),
+                           t0 = runif(N, 0, .5),
+                           st0 = runif(N, 0, .25),
+                           crit_old = runif(N, 0, 1),
+                           crit_new = runif(N, -1, 0)
+             ) %>%
+    mutate(z = a*runif(N),
+           sz = runif(N, 0, .5)
+           ) %>%
+    tibble::rowid_to_column("id")
+  
+    quantile_summary <- do(rowwise(parameters), {
+      row = .$id
+      sim_data <- as.data.frame(
+        diffusion_SDT(5e4, a=.$a,v=.$v, t0=.$t0, z=.$z, sz=.$sz, sv=.$sv, st0=.$st0,
+                      crit = c(.$crit_old, .$crit_new)
+                      )
+          ) %>%
+        group_by(speeded_resp)
+      
+      speeded_quantiles <- sim_data %>%
+        summarise(quintiles = list(
+                  data.frame(quantile = c("10%", "30%", "50%", "70%", "90%", "100%"),
+                             value = quantile(RT, c(.1, .3, .5, .7, .9, 1)),
+                             stringsAsFactors = FALSE)
+                  )) %>%
+        ungroup()
+
+      joint_counts <- sim_data %>%
+        group_by(delayed_resp, add=TRUE) %>%
+        count() %>%
+        ungroup() %>%
+        left_join(speeded_quantiles, by = "speeded_resp") %>%
+        ungroup() %>%
+        filter(n >= 6) %>%
+        unnest() %>%
+        group_by(speeded_resp, delayed_resp) %>%
+        mutate(bin_counts = ceiling(n*c(.1, .2, .2, .2, .2, .1))) %>%
+        ungroup() %>%
+        mutate(id = row) %>%
+        select(id, speeded_resp, delayed_resp, quantile, value, bin_counts)
+    })
+
+  return(bind_cols(select(parameters, -id),
+                   tidyr::nest(quantile_summary, speeded_resp, delayed_resp, quantile, value, bin_counts)
+                   )
+         )
+}
+
+diffusion_obj <- function(theta, data, fixed=NULL, scale=FALSE){
+
+  parameters <- c(theta, fixed)
+  log_likelihood <- 0
+  Nsim <- 5e4
+
+  all_strengths <- unique(data$strength) # Study conditions to loop over
+  biases <- unique(data$bias) # Bias conditions to loop over
+  boundaries <- c(0,1) # Boundaries to loop over
+
+  sim_data <- diffusion_SDT(N=Nsim, a = theta["a"], z = theta['z'],
+                            v = theta[paste0("v.", strength)], sv = sv,
+                            t0 = theta["t0"], st0 = theta["st0"],
+                            crit = c(theta[paste0("crit_old.", bias)],
+                                     theta[paste0("crit_new.", bias)])
+                            )
+
+  insert_at = 1
+  for (sp_resp in boundaries) {
+    for (del_resp in boundaries) {
+
+      resp_index <- condition_index &
+                    data$speeded_boundary == sp_resp &
+                    data$delayed_boundary == del_resp
+      # Only proceed if this isn't a missing cell
+      if (any(resp_index)) {
+        matching_sim_responses <- sim_data[,'speeded_resp'] == sp_resp &
+                                  sim_data[,'delayed_resp'] == del_resp
+        cutpoints <- data$value[resp_index]
+        cutpoints[length(cutpoints)] <- Inf
+        
+        for (i in 1:length(cutpoints)) {
+          rt <- cutpoints[i]
+          p_cut <- sum(sim_data[matching_sim_responses, 'RT'] <= rt)
+          p[insert_at] <- p_cut
+          insert_at <- insert_at + 1
+        }
+        first <- insert_at-length(cutpoints)
+        last <- insert_at - 1
+        p[first:last] <- c(p[first], diff(p[first:last]))
+      }
+    }
+  }
+
+  if (any(p==0)) {
+    return(1e9)
+  }
+
+  log_likelihood <- log_likelihood + dmultinom(x = bin_counts,
+                                               size = sum(bin_counts),
+                                               prob = p / Nsim,
+                                               log = TRUE)
+
+  return(-log_likelihood)
+
+}
+```
