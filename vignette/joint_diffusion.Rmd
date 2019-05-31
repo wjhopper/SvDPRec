@@ -224,6 +224,8 @@ doParallel::registerDoParallel(cl)
 
 RcppParallel::setThreadOptions(floor(parallel::detectCores()/length(cl)))
 
+parallel::clusterCall(cl, function(x) {.libPaths(x)}, .libPaths())
+
 diffusion_fits <- foreach(sub = subjectwise_datalist,
                           .packages = c("optimx", "Rcpp"),
                           .noexport = c("diffusion_SDT", "joint_counts",
@@ -244,7 +246,7 @@ diffusion_fits <- foreach(sub = subjectwise_datalist,
     # Label bias conditions as conservative, neutral and liberal
     # This will make it easier to match up with parameters inside the objective function
     sub$data$bias <- factor(sub$data$pOld, labels = c("C","N","L"))
-    
+
     if (params$use_cpp) {
       sourceCpp(file.path(root_dir, "src", "diffusion.cpp"))
       RcppParallel::setThreadOptions(1)
@@ -261,9 +263,16 @@ diffusion_fits <- foreach(sub = subjectwise_datalist,
     best_value <- Inf
     n <- 1
     while (n <= 25) {
+
       print(sprintf("Subject %s, iteration %i", sub$data$subject[1], n))
-      if (n > 1) {
-        parameters[c("v.L","v.W","v.S")] <- rnorm(3, c(-1, .5, 1.5))
+
+      if (n == 1) {
+        parameters[c("crit_old.C", "crit_old.N", "crit_old.L",
+                     "crit_new.C", "crit_new.N", "crit_new.L")] <- 0
+      }
+
+      if (n > 2) {
+        parameters[c("v.L","v.W","v.S")] <- sort(rnorm(3, c(-1, .5, 1.5)))
         parameters[c("crit_old.C", "crit_old.N", "crit_old.L",
                    "crit_new.C", "crit_new.N", "crit_new.L")] <- 
           runif(6, c(1, .5, 0, 1, .5, 0), c(1.5, 1, .5, 1.5, 1, .5))
