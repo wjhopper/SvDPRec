@@ -52,9 +52,9 @@ if (params$use_cpp) {
 
 diffusion_obj <- function(theta, data, fixed=NULL, scale=FALSE){
 
-  parameters <- c(parameters, fixed)
+  parameters <- c(theta, fixed)
   log_likelihood <- 0
-  Nsim <- 1e4
+  Nsim <- 5e4
 
   all_strengths <- unique(data$strength) # Study conditions to loop over
   biases <- unique(data$bias) # Bias conditions to loop over
