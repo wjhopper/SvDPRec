@@ -23,6 +23,7 @@ library(dplyr)
 library(tidyr)
 library(RcppParallel)
 library(dqrng)
+library(iterators)
 root_dir <- rprojroot::is_rstudio_project$find_file()
 ```
 
@@ -41,12 +42,11 @@ diffusion_datasets <- function(N=500) {
                            sv = rexp(N, 2),
                            t0 = runif(N, 0, .5),
                            st0 = runif(N, 0, .25),
-                           crit_old = runif(N, 0, 1),
-                           crit_new = runif(N, -1, 0)
+                           z = runif(N),
+                           sz = runif(N, 0, .5),
+                           crit_old = runif(N, -1,0),
+                           crit_new = runif(N, 0, 1)
              ) %>%
-    mutate(z = a*runif(N),
-           sz = runif(N, 0, .5)
-           ) %>%
     tibble::rowid_to_column("id")
   
     quantile_summary <- do(rowwise(parameters), {
@@ -79,38 +79,35 @@ diffusion_datasets <- function(N=500) {
         ungroup() %>%
         mutate(id = row) %>%
         select(id, speeded_resp, delayed_resp, quantile, value, bin_counts)
-    })
+    }) %>%
+    tidyr::nest(-id)
 
   return(bind_cols(select(parameters, -id),
-                   tidyr::nest(quantile_summary, speeded_resp, delayed_resp, quantile, value, bin_counts)
+                   quantile_summary
                    )
          )
 }
 
 diffusion_obj <- function(theta, data, fixed=NULL, scale=FALSE){
 
-  parameters <- c(theta, fixed)
-  log_likelihood <- 0
+  theta <- c(theta, fixed)
   Nsim <- 5e4
-
-  all_strengths <- unique(data$strength) # Study conditions to loop over
-  biases <- unique(data$bias) # Bias conditions to loop over
   boundaries <- c(0,1) # Boundaries to loop over
 
   sim_data <- diffusion_SDT(N=Nsim, a = theta["a"], z = theta['z'],
-                            v = theta[paste0("v.", strength)], sv = sv,
+                            v = theta["v"], sv = theta["sv"],
                             t0 = theta["t0"], st0 = theta["st0"],
-                            crit = c(theta[paste0("crit_old.", bias)],
-                                     theta[paste0("crit_new.", bias)])
+                            crit = theta[c("crit_old","crit_new")],
                             )
 
+  p <- numeric(nrow(data))
   insert_at = 1
+
   for (sp_resp in boundaries) {
     for (del_resp in boundaries) {
 
-      resp_index <- condition_index &
-                    data$speeded_boundary == sp_resp &
-                    data$delayed_boundary == del_resp
+      resp_index <- data$speeded_resp == sp_resp &
+                    data$delayed_resp == del_resp
       # Only proceed if this isn't a missing cell
       if (any(resp_index)) {
         matching_sim_responses <- sim_data[,'speeded_resp'] == sp_resp &
@@ -135,12 +132,84 @@ diffusion_obj <- function(theta, data, fixed=NULL, scale=FALSE){
     return(1e9)
   }
 
-  log_likelihood <- log_likelihood + dmultinom(x = bin_counts,
-                                               size = sum(bin_counts),
-                                               prob = p / Nsim,
-                                               log = TRUE)
+  log_likelihood <- dmultinom(x = data$bin_counts,
+                              size = sum(data$bin_counts),
+                              prob = p / Nsim,
+                              log = TRUE)
 
   return(-log_likelihood)
-
 }
 ```
+
+```{r data, cache=TRUE, dependson=c("diffusion_functions")}
+datasets <- diffusion_datasets()
+```
+
+
+```{r fit, cache=TRUE, dependson=c("diffusion_functions")}
+RcppParallel::setThreadOptions(parallel::detectCores())
+
+p_names <- c("v", "sv", "a", "t0", "st0", "z", "sz", "crit_old", "crit_new")
+
+diffusion_fits <- foreach(d = iter(datasets,by="row")) %do% {
+
+    # Extract & order paramter vector for optimization
+
+    parameters <- numeric(length(p_names))
+    names(parameters) <- p_names
+
+    best_value <- Inf
+    n <- 1
+    while (n <= 100) {
+
+      print(sprintf("Dataset %d, iteration %i", d$id[1], n))
+      parameters["v"] <- rnorm(1, 0, 2)
+      parameters["sv"] <- rexp(1, 2)
+      parameters["a"] <- runif(1, 0, 1.5)
+      parameters["t0"] <- runif(1, 0, .5)
+      parameters["st0"] <- runif(1, 0, .25)
+      parameters["z"] <- runif(1)
+      parameters["sz"] <- runif(1, 0, .5)
+      parameters["crit_old"] <- runif(1, -1, 0)
+      parameters["crit_new"] <- runif(1, 0, 1)
+
+      fit <- optimx(parameters,
+                    fn = diffusion_obj,
+                    method = c("L-BFGS-B"),
+                    itnmax = 1000,
+                    lower = c(-6, 0, 0, 0,   0,   0,    0,  -4, -4),
+                    upper = c( 6, 5, 4, .75, .75, .99, .75,  4,  4),
+                    control = list(kkt=FALSE, maxit=1000),
+                    data = d$data[[1]]
+                    )
+      if (fit$value < best_value) {
+        best_value <- fit$value
+        best_fit <- fit
+      }
+      value <- fit$value
+      n <- n + 1
+    }
+
+    # If we never improved, just take the last one, it doesn't matter anyway,
+    # we just need an object to save
+    if (best_value == Inf) {
+      best_fit <- fit 
+    }
+
+    best_fit
+  }
+
+diffusion_fits <- lapply(diffusion_fits, tibble::rownames_to_column, var="method") %>%
+  bind_rows()
+GOF <- select(diffusion_fits, subject, fevals, gevals, niter, convcode, value)
+bf_parameters <- select(diffusion_fits, !!!names(p_names))
+```
+
+```{r}
+x <- bind_rows(real = select(datasets, !!!names(p_names), id),
+               est = tibble::rowid_to_column(bf_parameters, var = "id"),
+               .id="type") %>%
+  gather(key="parameter",value = "value", -rowid, -type) %>%
+  spread(key="type",value="value")
+```
+
