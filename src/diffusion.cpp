@@ -7,6 +7,7 @@
 #include <dqrng_distribution.h>
 // [[Rcpp::depends(RcppParallel)]]
 #include <RcppParallel.h>
+#include <chrono>
 
 // The following diffusion_SDT_sim function is intentially not exported to R.
 // It exists in case the need for some backwards compatibility arises, or if in the future
@@ -109,6 +110,11 @@ int nThreads() {
 // Alternatively, the seed could be a global variable, have a function to modify this global value,
 // and then the thread-local pcg64 instances could use this global value as their seed.
 
+
+auto now = std::chrono::high_resolution_clock::now();
+
+pcg64 rng(std::chrono::high_resolution_clock::to_time_t( now ));
+
 using namespace RcppParallel;
 
 struct Diffusion : public Worker
@@ -134,7 +140,7 @@ struct Diffusion : public Worker
   {}
   
   void operator()(std::size_t begin, std::size_t end) {
-    pcg64 rng(42, end);
+    rng.set_stream(end);
 
     dqrng::normal_distribution evidence_dist(v, sv);
     dqrng::normal_distribution noise(0, s);
@@ -197,5 +203,7 @@ Rcpp::NumericVector diffusion_SDT(int N, double a, double v, double t0,
   
   Diffusion diffusion(sim_data, a, v, t0, z, sz, sv, st0, s, crit, dt);
   RcppParallel::parallelFor(0, N, diffusion, N/nThreads());
+  
+  sim_data.attr("class") = CharacterVector::create("diffusion_SDT","matrix");
   return sim_data;
 }
