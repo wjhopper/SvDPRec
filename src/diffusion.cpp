@@ -29,7 +29,6 @@ NumericMatrix diffusion_SDT_sim(int N, double a, double v, double t0,
 
   NumericMatrix sim_data(N, 3);
   colnames(sim_data) = CharacterVector::create("RT", "speeded_resp","delayed_resp");
-  z = z * a; // convert relative starting point to absolute
   double dt = .001; // timestep size
   // 
   NumericVector evidence = dqrng::dqrnorm(N, v, sv); // Sample SDT evidence strengths \ drift rates
@@ -195,8 +194,7 @@ Rcpp::NumericVector diffusion_SDT(int N, double a, double v, double t0,
 
   double dt = .001; // timestep size
   s = sqrt(pow(s, 2.0l) * dt); // scale drift coefficient to instantaneous s.d.
-  z = z * a; // convert relative starting point to absolute
-  
+
   // allocate the output vector
   NumericMatrix sim_data(N, 3);
   colnames(sim_data) = CharacterVector::create("RT", "speeded_resp","delayed_resp");
