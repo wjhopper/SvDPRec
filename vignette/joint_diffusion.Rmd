@@ -106,7 +106,7 @@ diffusion_obj <- function(theta, data, fixed=NULL, scale=FALSE){
       }
 
       if (any(p==0)) {
-        return(1e9)
+        p[p==0] <- 5e-6
       }
 
       log_likelihood <- log_likelihood + dmultinom(x = bin_counts,
