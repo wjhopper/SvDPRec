@@ -222,7 +222,7 @@ cl <- parallel::makeCluster(min(parallel::detectCores(), length(subjectwise_data
                             methods = FALSE)
 doParallel::registerDoParallel(cl)
 
-RcppParallel::setThreadOptions(floor(parallel::detectCores()/length(cl)))
+RcppParallel::setThreadOptions(1)
 
 parallel::clusterCall(cl, function(x) {.libPaths(x)}, .libPaths())
 
