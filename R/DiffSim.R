@@ -7,7 +7,7 @@ diffusion_SDT <- function(N, a, v, t0, z, sv, st0, sz=0, s=1, crit) {
                      dimnames = list(NULL, c("RT","speeded_resp","delayed_resp"))
                      )
 
-  NDT <- runif(N, t0 - st0/2, t0 + st0/2) # non-decision_times
+  NDT <- runif(N, t0, t0 + st0) # non-decision_times
   evidence <- rnorm(N, v, sv) # Sample SDT evidence strengths / drift rates
   drifts <- evidence* dt # Sample sampled evidence scale to instantaneous drift
   s <- sqrt(s^2 * dt) # scale drift coefficient to instantaneous s.d.
