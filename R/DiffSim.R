@@ -1,4 +1,4 @@
-diffusion_SDT <- function(N, a, v, t0, z, sv, st0, sz=0, s=1, crit) {
+diffusion_SDT <- function(N, a, v, t0, z, sv, st0, sz=0, s=1, crit=c(0, 0)) {
 
   z <- z*a # convert relative starting point to absolute
   dt <- .001 # time step size

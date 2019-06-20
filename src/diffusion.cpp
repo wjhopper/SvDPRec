@@ -22,7 +22,7 @@ using namespace Rcpp;
 NumericMatrix diffusion_SDT_sim(int N, double a, double v, double t0,
                                 double z, double sz = 0, double sv = 0,
                                 double st0 = 0, double s = 1,
-                                NumericVector crit = NumericVector::create(-.5, 5)) {
+                                NumericVector crit = NumericVector::create(0, 0)) {
 
   dqrng::dqRNGkind("pcg64");
   dqrng::dqset_seed(42);
@@ -191,8 +191,8 @@ using namespace Rcpp;
 Rcpp::NumericVector diffusion_SDT(int N, double a, double v, double t0,
                                   double z, double sz = 0, double sv = 0, 
                                   double st0 = 0, double s = 1,
-                                  NumericVector crit = NumericVector::create(-.5, 5)) {
-  
+                                  NumericVector crit = NumericVector::create(0, 0)) {
+
   double dt = .001; // timestep size
   s = sqrt(pow(s, 2.0l) * dt); // scale drift coefficient to instantaneous s.d.
   z = z * a; // convert relative starting point to absolute
