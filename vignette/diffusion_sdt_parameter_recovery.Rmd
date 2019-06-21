@@ -163,8 +163,6 @@ diffusion_obj <- function(theta, data, fixed=NULL, Nsim=5e4){
 ```{r start_cluster}
 RcppParallel::setThreadOptions(1)
 
-parameters <- sample_parameters(1000)
-
 cl <- parallel::makeCluster(parallel::detectCores(),
                             outfile = "",
                             methods = FALSE)
@@ -181,13 +179,15 @@ doParallel::registerDoParallel(cl)
 theta <- c(a = 0.634, v = 0.0465, sv = 2.534, t0 = 0.0782, st0 = 0.1888,
            z = 0.4585, sz = 0.0723, crit_old = -0.355, crit_new = 0.681)
 G2 <- foreach(i=1:10000,
-              .combine = c) %do% {
+              .noexport = c("diffusion_SDT"),
+              .packages = c("optimx", "dplyr" , "tidyr"),
+              .combine = c) %dopar% {
     raw_data <- diffusion_SDT(1000, a = theta["a"], z = theta['z'],
                               v = theta["v"], sv = theta["sv"],
                               t0 = theta["t0"], st0 = theta["st0"],
                               crit = theta[c("crit_old","crit_new")]
                               )
-    data <- summary(raw_data)
+    data <- summary.diffusion_SDT(raw_data)
     g2 <- diffusion_obj(theta, data=data, Nsim = 1e5)
     g2
   }
@@ -206,13 +206,11 @@ legend(x=max(G2)-20, y = max(densities$density),
        lwd=2, bty = 'n')
 ```
 
-```{r null_g2_recovery, cache=TRUE, dependson=c("diffusion_functions")}
+```{r sample_parameters}
+parameters <- sample_parameters(1000)
 
-
-fits <- foreach(p_row = iterators::iter(select(parameters, -id), "row"),
-                .noexport = c("diffusion_SDT"),
-                .packages = c("optimx", "dplyr" ,"tidyr")
-                ) %dopar% {
+samples <- foreach(p_row = iterators::iter(select(parameters, -id), "row")) %do%
+  {
 
     theta <- unlist(p_row)
     raw_data <- diffusion_SDT(1000, a = theta["a"], z = theta['z'],
@@ -221,6 +219,10 @@ fits <- foreach(p_row = iterators::iter(select(parameters, -id), "row"),
                               crit = theta[c("crit_old","crit_new")]
                              )
     data <- summary.diffusion_SDT(raw_data)
+    list(theta=theta, data=data)
+  }
+rm(data, raw_data, theta, p_row)
+```
 
     fit <- optimx(theta,
                   fn = diffusion_obj,
