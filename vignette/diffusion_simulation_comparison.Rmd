@@ -1,0 +1,232 @@
+---
+title: "Diffusion Simuation Comparisons"
+author: "Will Hopper"
+date: "`r format(Sys.Date(), '%b %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = "center")
+library(rprojroot)
+library(Rcpp)
+library(kableExtra)
+library(optimx)
+library(foreach)
+library(rtdists)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(RcppParallel)
+library(dqrng)
+library(iterators)
+root_dir <- rprojroot::is_rstudio_project$find_file()
+```
+
+```{r functions}
+source(file.path(root_dir, "R", "DiffSim.R"))
+diffusion_SDT_R <- diffusion_SDT
+
+sourceCpp(file.path(root_dir, "src", "diffusion.cpp"))
+
+sample_parameters <- function(N=500) {
+  
+  parameters <- data.frame(id = 1:N,
+                           a = runif(N, .5, 1.5),
+                           v = rnorm(N),
+                           t0 = runif(N, 0, .5),
+                           z = runif(N, .1, .9),
+                           sz = runif(N, 0, .5),
+                           sv = rexp(N, 2),
+                           st0 = runif(N, 0, .25),
+                           crit_old = runif(N, -1,0),
+                           crit_new = runif(N, 0, 1)
+  )
+  parameters$z <- parameters$z * parameters$a # convert relative to absolute 
+  return(parameters)
+}
+
+```
+
+```{r start_cluster, echo=FALSE}
+RcppParallel::setThreadOptions(1)
+
+cl <- parallel::makeCluster(parallel::detectCores(),
+                            outfile = "",
+                            methods = FALSE)
+invisible(parallel::clusterCall(cl, function(x) {.libPaths(x)},
+                                x = .libPaths())
+          )
+invisible(parallel::clusterCall(cl, function(x) {Rcpp::sourceCpp(x)},
+                                x = file.path(root_dir, "src", "diffusion.cpp"))
+          )
+doParallel::registerDoParallel(cl)
+```
+
+```{r simulations, cache=TRUE, cache.extra=list(diffusion_SDT_R, tools::md5sum(file.path(root_dir, "src", "diffusion.cpp")))}
+parameters <- sample_parameters(500)
+
+samples <- foreach(p_row = iterators::iter(select(parameters, -id), "row"),
+                   .noexport = c("diffusion_SDT"),
+                   .packages = c("optimx", "dplyr" , "tidyr" ,"rtdists")) %dopar% 
+  {
+    
+    theta <- unlist(p_row)
+    p <- p1 <- p2 <- p3 <- numeric(12)
+
+    my_data <- diffusion_SDT(50000, a = theta["a"], z = theta['z'],
+                             v = theta["v"], sv = theta["sv"],
+                             t0 = theta["t0"], st0 = theta["st0"],
+                             crit = theta[c("crit_old","crit_new")]
+                             )
+    my_data_R <- diffusion_SDT_R(50000, a = theta["a"], z = theta['z'],
+                                 v = theta["v"], sv = theta["sv"],
+                                 t0 = theta["t0"], st0 = theta["st0"],
+                                 crit = theta[c("crit_old","crit_new")]
+                                 )
+    rtdists_data <- rdiffusion(50000, a = theta["a"], z = theta['z'],
+                               v = theta["v"], sv = theta["sv"],
+                               t0 = theta["t0"], st0 = theta["st0"]
+                               )
+    rtdists_data$response <- as.numeric(rtdists_data$response) - 1
+    rtdists_data <- as.matrix(rtdists_data)
+    colnames(rtdists_data) <- c("RT", "speeded_resp")
+
+    start <- 1
+    end <- 6
+    for (sp_resp in c(0, 1)) {
+      x <- qdiffusion(c(.1, .3, .5, .7, .9, 1),
+                      sp_resp + 1,
+                      a = theta["a"], z = theta['z'],
+                      v = theta["v"], sv = theta["sv"],
+                      t0 = theta["t0"], st0 = theta["st0"],
+                      scale_p = TRUE)
+      x[is.na(x)] <- 0
+      p[start:end] <- pdiffusion(x,
+                                 sp_resp + 1,
+                                 a = theta["a"], z = theta['z'],
+                                 v = theta["v"], sv = theta["sv"],
+                                 t0 = theta["t0"], st0 = theta["st0"]
+                                 )
+      for (i in 1:6) {
+        p1[start + (i-1)] <- sum(my_data[my_data[,'speeded_resp'] == sp_resp, 'RT'] < x[i])
+        p2[start + (i-1)] <- sum(rtdists_data[rtdists_data[,'speeded_resp'] == sp_resp, 'RT'] < x[i])
+        p3[start + (i-1)] <- sum(my_data_R[my_data_R[,'speeded_resp'] == sp_resp, 'RT'] < x[i])
+      }
+      start <- start + 6
+      end <- end + 6
+    }
+
+    data.frame(quantiles=c(.1, .3, .5, .7, .9, 1),
+               response = rep(0:1, each=6),
+               true=p*50000, mine=p1, rtdists=p2, mine_R=p3)
+  }
+```
+
+```{r stopcluster, echo=FALSE}
+parallel::stopCluster(cl)
+```
+
+```{r tidy}
+within_bin_counts <- function(x) {
+  diff(c(0, x))
+}
+
+names(samples) <- 1:length(samples)
+samples <- bind_rows(samples, .id="id") %>%
+  filter(!is.na(true)) %>%
+  group_by(id, response) %>%
+  mutate_at(c("mine","mine_R","rtdists","true"), within_bin_counts)
+```
+
+```{r count_plots, echo=FALSE, fig.width=7, fig.height=8.5}
+ggplot(samples, aes(x=mine, y=true, color=factor(response))) + 
+  geom_point() + 
+  geom_abline(slope=1, intercept=0) +
+  facet_grid(quantiles~response,
+             labeller = labeller(quantiles=label_value,
+                                 response = label_both)
+             ) +
+  xlab("diffusion_SDT") +
+  ylab("pdiffusion") +
+  scale_color_discrete(guide=FALSE) +
+  ggtitle("True vs. diffusion_SDT in C++")
+
+ggplot(samples, aes(x=mine_R, y=true, color=factor(response))) + 
+  geom_point() + 
+  geom_abline(slope=1, intercept=0) +
+  facet_grid(quantiles~response,
+             labeller = labeller(quantiles=label_value,
+                                 response = label_both)
+             ) +
+  xlab("diffusion_SDT") +
+  ylab("pdiffusion") +
+  scale_color_discrete(guide=FALSE) +
+  ggtitle("True vs. diffusion_SDT in R")
+
+ggplot(samples, aes(x=mine, y=rtdists, color=factor(response))) +
+  geom_point() + 
+  geom_abline(slope=1, intercept=0) +
+  facet_grid(quantiles~response,
+             labeller = labeller(quantiles=label_value,
+                                 response = label_both)
+             ) +
+  xlab("diffusion_SDT") +
+  ylab("rdiffusion") +
+  scale_color_discrete(guide=FALSE) +
+  ggtitle("rdiffusion vs. diffusion_SDT in C++")
+
+ggplot(samples, aes(x=mine_R, y=rtdists, color=factor(response))) +
+  geom_point() + 
+  geom_abline(slope=1, intercept=0) +
+  facet_grid(quantiles~response,
+             labeller = labeller(quantiles=label_value,
+                                 response = label_both)
+             ) +
+  xlab("diffusion_SDT R Version ") +
+  ylab("rdiffusion") +
+  scale_color_discrete(guide=FALSE) +
+  ggtitle("rdiffusion vs. diffusion_SDT in R")
+
+ggplot(samples, aes(x=rtdists, y=true, color=factor(response))) +
+  geom_point() + 
+  geom_abline(slope=1, intercept=0) +
+  facet_grid(quantiles~response,
+             labeller = labeller(quantiles=label_value,
+                                 response = label_both)
+             ) +
+  xlab("rdiffusion") +
+  ylab("pdiffusion") +
+  scale_color_discrete(guide=FALSE) +
+  ggtitle("True vs. rdiffusion")
+
+ggplot(samples, aes(x=mine_R, y=mine, color=factor(response))) + 
+  geom_point() +
+  geom_abline(slope=1, intercept=0) +
+  facet_grid(quantiles~response,
+             labeller = labeller(quantiles=label_value,
+                                 response = label_both)
+             ) +
+  xlab("diffusion_SDT_R") +
+  ylab("diffusion_SDT") +
+  scale_color_discrete(guide=FALSE) +
+  ggtitle("diffusion_SDT in C++ vs. diffusion_SDT in R")
+```
+
+
+```{r RT, cache=TRUE, cache.extra=list(diffusion_SDT_R, tools::md5sum(file.path(root_dir, "src", "diffusion.cpp")))}
+A <- as.data.frame(diffusion_SDT(1e6, a=1.5, v=1, t0=.5, z=.6, sz=.25, st0=.25, sv=.5)[,1:2])
+names(A)[1] <- "rt"
+B <- rdiffusion(1e6, a=1.5, v=1, t0=.5, z=.6, sz=.25, st0=.25, sv=.5)
+C <- bind_rows("diffusion_SDT" = A[, 1, drop=FALSE],
+               "rdiffusion" = B[, 1, drop=FALSE],
+               .id ="type") %>%
+  filter(rt <= 4)
+ggplot(C, aes(x=rt,color=type)) + 
+  geom_density() +
+  xlim(0,4)
+```
