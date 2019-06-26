@@ -176,7 +176,7 @@ invisible(parallel::clusterCall(cl, function(x) {Rcpp::sourceCpp(x)},
 doParallel::registerDoParallel(cl)
 ```
 
-```{r null_g2, eval=FALSE}
+```{r null_g2, cache=TRUE, dependson=c("diffusion_functions")}
 theta <- c(a = 0.634, v = 0.0465, sv = 2.534, t0 = 0.0782, st0 = 0.1888,
            z = 0.4585, sz = 0.0723, crit_old = -0.355, crit_new = 0.681)
 G2 <- foreach(i=1:10000,
@@ -207,7 +207,7 @@ legend(x=max(G2)-20, y = max(densities$density),
        lwd=2, bty = 'n')
 ```
 
-```{r sample_parameters}
+```{r sample_parameters, cache=TRUE, dependson=c("diffusion_functions")}
 parameters <- sample_parameters(1000)
 
 samples <- foreach(p_row = iterators::iter(select(parameters, -id), "row")) %do%
@@ -225,7 +225,7 @@ samples <- foreach(p_row = iterators::iter(select(parameters, -id), "row")) %do%
 rm(data, raw_data, theta, p_row)
 ```
 
-```{r null_g2_recovery, cache=TRUE, dependson=c("diffusion_functions")}
+```{r null_g2_recovery, cache=TRUE, dependson=c("diffusion_functions","sample_parameters")}
 null_fit_optimx <- foreach(s = samples,
                            .noexport = c("diffusion_SDT"),
                            .packages = c("optimx", "dplyr" , "tidyr")
@@ -271,7 +271,7 @@ legend(x=xaxis[length(xaxis)]-20, y = max(densities$density),
        lwd=2, bty = 'n')
 ```
 
-```{r random_theta_recovery, cache=TRUE, dependson=c("diffusion_functions")}
+```{r random_theta_recovery, cache=TRUE, dependson=c("diffusion_functions","sample_parameters")}
 rec_fits_optimx <- foreach(s = samples,
                            .noexport = c("diffusion_SDT"),
                            .packages = c("optimx", "dplyr" , "tidyr")) %dopar% {
@@ -331,7 +331,7 @@ ggplot(x, aes(x=real,y=est)) +
   facet_wrap(~parameter, nrow=3, scales = "free")
 ```
 
-```{r collapsed}
+```{r collapsed, cache=TRUE, dependson=c("diffusion_functions","sample_parameters")}
 rdiffusion_obj <- function(theta, data, fixed=NULL, Nsim=5e4) {
   
   # cat(theta, "\n")
