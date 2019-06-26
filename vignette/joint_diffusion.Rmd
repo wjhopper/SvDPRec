@@ -274,8 +274,8 @@ optimx_fits <- foreach(sub = subjectwise_datalist,
       if (n > 2) {
         parameters[c("v.L","v.W","v.S")] <- sort(rnorm(3, c(-1, .5, 1.5)))
         parameters[c("crit_old.C", "crit_old.N", "crit_old.L",
-                   "crit_new.C", "crit_new.N", "crit_new.L")] <- 
-          runif(6, c(1, .5, 0, 1, .5, 0), c(1.5, 1, .5, 1.5, 1, .5))
+                   "crit_new.C", "crit_new.N", "crit_new.L")] <-
+          runif(6, c(1, .5, 0, -.5, -1, -1.5), c(1.5, 1, .5, 0, -.5, -1))
         parameters[c("sv.L","sv.T")] <- rexp(2, 2)
         parameters[c("a","z","t0","st0")] <- runif(4, c(.5, .25, 0, 0), c(1, .75, .5, .25))
       }
