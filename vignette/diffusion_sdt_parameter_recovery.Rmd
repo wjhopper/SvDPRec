@@ -308,30 +308,12 @@ rec_fits_optimx <- foreach(s = samples,
   }
 ```
 
-```{r stopCluster, eval=FALSE}
-parallel::stopCluster(cl)
-```
-
 ```{r tidy_recovered_params}
 recovered_fits <- lapply(lapply(r_fits, `[[`, 'fit'),
                          tibble::rownames_to_column, var="method") %>%
   bind_rows()
 recovered_GOF <- select(recovered_fits, fevals, gevals, niter, convcode, value)
 recovered_parameters <- select(recovered_fits, !!!names(parameters)[-1])
-```
-
-```{r old, eval=FALSE}
-# p_names <- c("v", "sv", "a", "t0", "st0", "z", "sz", "crit_old", "crit_new")
-# print(sprintf("Dataset %d, iteration %i", d$id[1], n))
-# parameters["v"] <- rnorm(1, 0, 1)
-# parameters["sv"] <- .001 + min(rexp(1, rate = 2), 5)
-# parameters["a"] <- runif(1, 0.001, 1.5)
-# parameters["t0"] <- runif(1, 0.001, .5)
-# parameters["st0"] <- runif(1, 0.001, .25)
-# parameters["z"] <- runif(1, 0.001, 1)
-# parameters["sz"] <- runif(1, 0.001, .5)
-# parameters["crit_old"] <- runif(1, -1, 0)
-# parameters["crit_new"] <- runif(1, 0, 1)
 ```
 
 ```{r random_recovery_plot}
@@ -346,4 +328,221 @@ x <- all_params %>%
 ggplot(x, aes(x=real,y=est)) +
   geom_point() +
   facet_wrap(~parameter, nrow=3, scales = "free")
+```
+
+```{r collapsed}
+rdiffusion_obj <- function(theta, data, fixed=NULL, Nsim=5e4) {
+  
+  # cat(theta, "\n")
+  theta <- c(theta, fixed)
+  boundaries <- c(0,1) # Boundaries to loop over
+  
+  set.seed(42)
+  sim_data <- rdiffusion(n=Nsim, a = theta["a"], z = theta['z'],
+                         v = theta["v"], sv = theta["sv"],
+                         t0 = theta["t0"], st0 = theta["st0"],
+                         stop_on_error=FALSE)
+  sim_data$response <- as.numeric(sim_data$response) - 1
+  sim_data <- as.matrix(sim_data)
+  colnames(sim_data) <- c("RT", "speeded_resp")
+  
+  p <- numeric(nrow(data))
+  start <- 1
+
+  for (sp_resp in boundaries) {
+
+      resp_index <- data$speeded_resp == sp_resp
+      sim_responses <- sim_data[,'speeded_resp'] == sp_resp
+
+      # Only proceed if this isn't a missing cell
+      if (any(resp_index) && any(sim_responses)) {
+
+        cutpoints <- data$RT[resp_index]
+        n_cutpoints <- length(cutpoints)
+        cutpoints[n_cutpoints] <- Inf
+
+        # Compute porportion below each cutoff
+        resp_proportions <- p_diffusion_SDT(sim_data[sim_responses, , drop=FALSE],
+                                            cutpoints)
+        # Convert to proportion between each cutoffs
+        resp_proportions <- c(resp_proportions[1],
+                              diff(resp_proportions)
+                              )
+
+        p[start:(start + n_cutpoints - 1)] <- resp_proportions
+        start <- start + n_cutpoints
+    }
+  }
+  
+  empty_preds <- p == 0
+  if (any(empty_preds)) {
+    p[empty_preds] <- 5e-06
+    # cat("Empty cell correction triggered\n")
+  }
+
+  filled_cells <- data$bin_counts != 0
+  obs_counts <- data$bin_counts[filled_cells]
+  exp_counts <- (p/Nsim)*sum(data$bin_counts)
+  exp_counts <- exp_counts[filled_cells]
+  g2 <- 2*sum(obs_counts*log(obs_counts/exp_counts))
+  return(g2)
+}
+
+diffusion_SDT_collapsed_obj <- function(theta, data, fixed=NULL, Nsim=5e4) {
+  
+  # cat(theta, "\n")
+  theta <- c(theta, fixed)
+  boundaries <- c(0,1) # Boundaries to loop over
+  set_diffusion_SDT_seed(22)
+  sim_data <- diffusion_SDT(Nsim, a = theta["a"], z = theta['z'],
+                            v = theta["v"], sv = theta["sv"],
+                            t0 = theta["t0"], st0 = theta["st0"]
+                            )
+
+  p <- numeric(nrow(data))
+  start <- 1
+
+  for (sp_resp in boundaries) {
+
+      resp_index <- data$speeded_resp == sp_resp
+      sim_responses <- sim_data[,'speeded_resp'] == sp_resp
+
+      # Only proceed if this isn't a missing cell
+      if (any(resp_index) && any(sim_responses)) {
+
+        cutpoints <- data$RT[resp_index]
+        n_cutpoints <- length(cutpoints)
+        cutpoints[n_cutpoints] <- Inf
+
+        # Compute porportion below each cutoff
+        resp_proportions <- p_diffusion_SDT(sim_data[sim_responses, , drop=FALSE],
+                                            cutpoints)
+        # Convert to proportion between each cutoffs
+        resp_proportions <- c(resp_proportions[1],
+                              diff(resp_proportions)
+                              )
+
+        p[start:(start + n_cutpoints - 1)] <- resp_proportions
+        start <- start + n_cutpoints
+    }
+  }
+  
+  empty_preds <- p == 0
+  if (any(empty_preds)) {
+    p[empty_preds] <- 5e-06
+    # cat("Empty cell correction triggered\n")
+  }
+
+  filled_cells <- data$bin_counts != 0
+  obs_counts <- data$bin_counts[filled_cells]
+  exp_counts <- (p/Nsim)*sum(data$bin_counts)
+  exp_counts <- exp_counts[filled_cells]
+  g2 <- 2*sum(obs_counts*log(obs_counts/exp_counts))
+  return(g2)
+}
+
+collapsed_fits_optimx <- foreach(s = samples,
+                                 .noexport = c("diffusion_SDT"),
+                                 .packages = c("optimx", "dplyr", "tidyr", "rtdists")) %dopar% 
+  {
+    data <- group_by(s$data, speeded_resp, quantile, RT) %>%
+      summarise(bin_counts = sum(bin_counts))
+    
+    rdiffusion_fits <- list()
+    diffusion_SDT_fits <- list()
+    
+    random_starts <- sample_parameters(2)[,-1]
+    
+    for (n in 1:nrow(random_starts)) {
+
+      starting_theta <- unlist(random_starts[n,])
+      
+      rdiffusion_fits[[n]] <- 
+        optimx(starting_theta[c("a","v","t0","z")],
+               fn = rdiffusion_obj,
+               method = c("L-BFGS-B"),
+               itnmax = 1000,
+               lower = c(0.01, -5, 0.01, 0.01),
+               upper = c(2.5,   5, 0.75, 1),
+               control = list(kkt=FALSE, maxit=1000, starttests=FALSE),
+               data = data,
+               fixed = s$theta[c("sz","sv","st0")]
+               )
+      
+      diffusion_SDT_fits[[n]] <- 
+        optimx(starting_theta[c("a","v","t0","z")],
+               fn = diffusion_SDT_collapsed_obj,
+               method = c("L-BFGS-B"),
+               itnmax = 1000,
+               lower = c(0.01, -5, 0.01, 0.01),
+               upper = c(2.5,   5, 0.75, 1),
+               control = list(kkt=FALSE, maxit=1000, starttests=FALSE),
+               data = data,
+               fixed = s$theta[c("sz","sv","st0")]
+               )
+    }
+    
+    list(starting_theta = random_starts,
+         diffusion_SDT_fits = diffusion_SDT_fits,
+         rdiffusion_fits = rdiffusion_fits)
+  }
+```
+
+
+```{r stopCluster, eval=FALSE}
+parallel::stopCluster(cl)
+```
+
+
+```{r}
+diffusion_SDT_recovered <- lapply(
+  collapsed_fits_optimx,
+  function(x) {
+    G2 <- sapply(x$diffusion_SDT_fits, `[[`, "value")
+    minG2 <- which(G2==min(G2))[1]
+    x$diffusion_SDT_fits[[minG2]]
+})
+names(diffusion_SDT_recovered) <- 1:length(diffusion_SDT_recovered)
+diffusion_SDT_recovered <- bind_rows(diffusion_SDT_recovered, .id="id")
+
+rdiffusion_recovered <- lapply(
+  collapsed_fits_optimx,
+  function(x) {
+    G2 <- sapply(x$rdiffusion_fits, `[[`, "value")
+    minG2 <- which(G2==min(G2))[1]
+    x$rdiffusion_fits[[minG2]]
+})
+names(rdiffusion_recovered) <- 1:length(rdiffusion_recovered)
+rdiffusion_recovered <- bind_rows(rdiffusion_recovered, .id="id")
+
+collapsed_recovered_fits <- bind_rows("rdiffusion" = rdiffusion_recovered,
+                                      "diffusion_SDT" = diffusion_SDT_recovered,
+                                      .id="type")
+
+collapsed_GOF <- select(collapsed_recovered_fits, type, id, fevals, gevals, niter, convcode, value)
+collapsed_parameters <- select(collapsed_recovered_fits, type, id, a, v, t0, z) %>%
+  mutate(id=as.integer(id))
+
+inner_join(gather(collapsed_parameters, key="parameter", value="est", -id, -type),
+           gather(parameters[, c("id","a","v","t0","z")], key="parameter", value="real", -id),
+           by=c("id", "parameter")
+           ) %>%
+  ggplot(aes(x=real,y=est)) +
+  geom_point() +
+  facet_grid(parameter~type, scales = "free")
+
+chi_cutoff <- qchisq(.999, 11)
+removed <- filter(collapsed_GOF, value > chi_cutoff) %>%
+  count(type)
+filter(collapsed_GOF, value <= chi_cutoff) %>%
+  ggplot(aes(x=value)) +
+  geom_histogram(aes(y=..density..),
+                 breaks=seq(0, chi_cutoff+1, 1)
+                 ) +
+  facet_wrap(~type, ncol=1) +
+  stat_function(fun=dchisq, color="red", args=list(df=11)) +
+  geom_label(data = removed,
+             mapping = aes(label = paste(n, "Removed")),
+             x=chi_cutoff -5, y= .25) +
+  ggtitle("G2 Distribution")
 ```
