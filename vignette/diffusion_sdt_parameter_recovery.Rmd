@@ -271,24 +271,16 @@ legend(x=xaxis[length(xaxis)]-20, y = max(densities$density),
 ```
 
 ```{r random_theta_recovery, cache=TRUE, dependson=c("diffusion_functions")}
-r_fits <- foreach(p_row = iterators::iter(parameters[1:50, -1], "row"),
-                .noexport = c("diffusion_SDT"),
-                .packages = c("optimx", "dplyr" ,"tidyr")
-                ) %dopar% {
-
-    true_theta <- unlist(p_row)
-    raw_data <- diffusion_SDT(1000, a = true_theta["a"], z = true_theta['z'],
-                              v = true_theta["v"], sv = true_theta["sv"],
-                              t0 = true_theta["t0"], st0 = true_theta["st0"],
-                              crit = true_theta[c("crit_old","crit_new")]
-                             )
-    data <- summary.diffusion_SDT(raw_data)
+rec_fits_optimx <- foreach(s = samples,
+                           .noexport = c("diffusion_SDT"),
+                           .packages = c("optimx", "dplyr" , "tidyr")) %dopar% {
 
     best_value <- Inf
+    best_start <- NULL
     n <- 1
     while (n <= 2) {
 
-      starting_theta <- unlist(sample_parameters(1))
+      starting_theta <- unlist(sample_parameters(1))[-1] #[-1] to drop id column
       fit <- optimx(starting_theta,
                     fn = diffusion_obj,
                     method = c("L-BFGS-B"),
@@ -296,12 +288,13 @@ r_fits <- foreach(p_row = iterators::iter(parameters[1:50, -1], "row"),
                     lower = c(0, -10, 0,    0, 0,    0, 0,    -4, -4),
                     upper = c(4,  10, 0.75, 1, 0.75, 6, 0.75,  4,  4),
                     control = list(kkt=FALSE, maxit=1000, starttests=FALSE),
-                    data = data
+                    data = s$data
                     )
 
       if (fit$value < best_value) {
         best_value <- fit$value
         best_fit <- fit
+        best_start <- starting_theta
       }
       
       n <- n + 1
@@ -311,8 +304,7 @@ r_fits <- foreach(p_row = iterators::iter(parameters[1:50, -1], "row"),
       best_fit <- fit
     }
     
-    list(true_theta=true_theta, starting_theta=starting_theta,
-         data=data, fit=best_fit)
+    list(starting_theta=best_start, fit=best_fit)
   }
 ```
 
