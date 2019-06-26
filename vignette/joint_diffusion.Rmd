@@ -226,7 +226,7 @@ RcppParallel::setThreadOptions(1)
 
 parallel::clusterCall(cl, function(x) {.libPaths(x)}, .libPaths())
 
-diffusion_fits <- foreach(sub = subjectwise_datalist,
+optimx_fits <- foreach(sub = subjectwise_datalist,
                           .packages = c("optimx", "Rcpp"),
                           .noexport = c("diffusion_SDT", "joint_counts",
                                         "starting_params", "test")) %dopar% {
@@ -307,7 +307,7 @@ diffusion_fits <- foreach(sub = subjectwise_datalist,
 
 parallel::stopCluster(cl)
 
-diffusion_fits <- lapply(diffusion_fits, tibble::rownames_to_column, var="method") %>%
+diffusion_fits <- lapply(optimx_fits, tibble::rownames_to_column, var="method") %>%
   bind_rows() %>%
   group_by(subject) %>%
   filter(value==min(value)) %>%
