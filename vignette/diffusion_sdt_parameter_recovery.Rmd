@@ -48,6 +48,7 @@ sample_parameters <- function(N=500) {
                            crit_old = runif(N, -1,0),
                            crit_new = runif(N, 0, 1)
                            )
+  parameters$z <- parameters$z * parameters$a
   return(parameters)
 }
 
@@ -234,8 +235,8 @@ null_fit_optimx <- foreach(s = samples,
                   fn = diffusion_obj,
                   method = c("L-BFGS-B"),
                   itnmax = 1000,
-                  lower = c(0, -10, 0,    0, 0,    0, 0,    -4, -4),
-                  upper = c(4,  10, 0.75, 1, 0.75, 6, 0.75,  4,  4),
+                  lower = c(0, -5, 0,    0,    0,    0, 0,    -3, -3),
+                  upper = c(3,  5, 0.75, 2.99, 0.75, 6, 0.75,  3,  3),
                   control = list(kkt=FALSE, maxit=1000, starttests=FALSE),
                   data = s$data
                   )
@@ -285,8 +286,8 @@ rec_fits_optimx <- foreach(s = samples,
                     fn = diffusion_obj,
                     method = c("L-BFGS-B"),
                     itnmax = 1000,
-                    lower = c(0, -10, 0,    0, 0,    0, 0,    -4, -4),
-                    upper = c(4,  10, 0.75, 1, 0.75, 6, 0.75,  4,  4),
+                    lower = c(0, -5, 0,    0,    0,    0, 0,    -3, -3),
+                    upper = c(3,  5, 0.75, 2.99, 0.75, 6, 0.75,  3,  3),
                     control = list(kkt=FALSE, maxit=1000, starttests=FALSE),
                     data = s$data
                     )
@@ -463,7 +464,7 @@ collapsed_fits_optimx <- foreach(s = samples,
                method = c("L-BFGS-B"),
                itnmax = 1000,
                lower = c(0.01, -5, 0.01, 0.01),
-               upper = c(2.5,   5, 0.75, 1),
+               upper = c(2.5,   5, 0.75, 2.49),
                control = list(kkt=FALSE, maxit=1000, starttests=FALSE),
                data = data,
                fixed = s$theta[c("sz","sv","st0")]
@@ -475,7 +476,7 @@ collapsed_fits_optimx <- foreach(s = samples,
                method = c("L-BFGS-B"),
                itnmax = 1000,
                lower = c(0.01, -5, 0.01, 0.01),
-               upper = c(2.5,   5, 0.75, 1),
+               upper = c(2.5,   5, 0.75, 2.49),
                control = list(kkt=FALSE, maxit=1000, starttests=FALSE),
                data = data,
                fixed = s$theta[c("sz","sv","st0")]

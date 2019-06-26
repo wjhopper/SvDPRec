@@ -206,8 +206,8 @@ starting_parameters <- data.frame(
          crit_old.L = crit.L,
          crit_new.C = crit.C,
          crit_new.N = crit.N,
-         crit_new.L = crit.L
-         ) %>%
+         crit_new.L = cit.L,
+         z = z * a) %>%
   select(-crit.C, -crit.N, -crit.L)
 ```
 
@@ -284,8 +284,8 @@ optimx_fits <- foreach(sub = subjectwise_datalist,
                     fn = diffusion_obj,
                     method = c("L-BFGS-B"),
                     itnmax = 1000,
-                    lower = c(-6, 0.01, -6, -6, 0.01, 0.01, .01, .01, .01, -4, -4, -4, -4, -4, -4),
-                    upper = c( 6, 5,     6,  6, 5,    4,    .99, .75, .75,  4,  4,  4,  4,  4,  4),
+                    lower = c(-6, 0.01, -6, -6, 0.01, 0.01,  .01, .01, .01, -4, -4, -4, -4, -4, -4),
+                    upper = c( 6, 5,     6,  6, 5,    3,    2.99, .75, .75,  4,  4,  4,  4,  4,  4),
                     control = list(kkt=FALSE, follow.on=FALSE, maxit=1000,starttests=FALSE),
                     data = sub$data)
       if (fit$value < best_value) {
