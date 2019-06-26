@@ -104,7 +104,7 @@ diffusion_obj <- function(theta, data, fixed=NULL, Nsim=5e4){
 
   theta <- c(theta, fixed)
   boundaries <- c(0,1) # Boundaries to loop over
-
+  set_diffusion_SDT_seed(42)
   sim_data <- diffusion_SDT(N=Nsim, a = theta["a"], z = theta['z'],
                             v = theta["v"], sv = theta["sv"],
                             t0 = theta["t0"], st0 = theta["st0"],
@@ -180,7 +180,7 @@ doParallel::registerDoParallel(cl)
 theta <- c(a = 0.634, v = 0.0465, sv = 2.534, t0 = 0.0782, st0 = 0.1888,
            z = 0.4585, sz = 0.0723, crit_old = -0.355, crit_new = 0.681)
 G2 <- foreach(i=1:10000,
-              .noexport = c("diffusion_SDT"),
+              .noexport = c("diffusion_SDT", "set_diffusion_SDT_seed"),
               .packages = c("optimx", "dplyr" , "tidyr"),
               .combine = c) %dopar% {
     raw_data <- diffusion_SDT(1000, a = theta["a"], z = theta['z'],
@@ -227,7 +227,7 @@ rm(data, raw_data, theta, p_row)
 
 ```{r null_g2_recovery, cache=TRUE, dependson=c("diffusion_functions","sample_parameters")}
 null_fit_optimx <- foreach(s = samples,
-                           .noexport = c("diffusion_SDT"),
+                           .noexport = c("diffusion_SDT", "set_diffusion_SDT_seed"),
                            .packages = c("optimx", "dplyr" , "tidyr")
                            ) %dopar% {
 
@@ -273,7 +273,7 @@ legend(x=xaxis[length(xaxis)]-20, y = max(densities$density),
 
 ```{r random_theta_recovery, cache=TRUE, dependson=c("diffusion_functions","sample_parameters")}
 rec_fits_optimx <- foreach(s = samples,
-                           .noexport = c("diffusion_SDT"),
+                           .noexport = c("diffusion_SDT", "set_diffusion_SDT_seed"),
                            .packages = c("optimx", "dplyr" , "tidyr")) %dopar% {
 
     best_value <- Inf
@@ -394,7 +394,7 @@ diffusion_SDT_collapsed_obj <- function(theta, data, fixed=NULL, Nsim=5e4) {
   # cat(theta, "\n")
   theta <- c(theta, fixed)
   boundaries <- c(0,1) # Boundaries to loop over
-  set_diffusion_SDT_seed(22)
+  set_diffusion_SDT_seed(42)
   sim_data <- diffusion_SDT(Nsim, a = theta["a"], z = theta['z'],
                             v = theta["v"], sv = theta["sv"],
                             t0 = theta["t0"], st0 = theta["st0"]
@@ -443,7 +443,7 @@ diffusion_SDT_collapsed_obj <- function(theta, data, fixed=NULL, Nsim=5e4) {
 }
 
 collapsed_fits_optimx <- foreach(s = samples,
-                                 .noexport = c("diffusion_SDT"),
+                                 .noexport = c("diffusion_SDT", "set_diffusion_SDT_seed"),
                                  .packages = c("optimx", "dplyr", "tidyr", "rtdists")) %dopar% 
   {
     data <- group_by(s$data, speeded_resp, quantile, RT) %>%
