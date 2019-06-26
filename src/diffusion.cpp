@@ -7,13 +7,15 @@
 #include <dqrng_distribution.h>
 // [[Rcpp::depends(RcppParallel)]]
 #include <RcppParallel.h>
+#include <chrono>
 
-pcg_extras::seed_seq_from<std::random_device> seed_source;
-pcg64 rng(seed_source);
+auto now = std::chrono::high_resolution_clock::now();
+uint64_t seed = static_cast<uint64_t> (std::chrono::high_resolution_clock::to_time_t( now ));
+pcg64 global_rng(seed);
 
 // [[Rcpp::export]]
 void set_diffusion_SDT_seed(uint64_t new_seed) {
-  rng.seed(new_seed);
+  seed = new_seed;
 }
 
 // The following diffusion_SDT_sim function is intentially not exported to R.
@@ -26,14 +28,14 @@ void set_diffusion_SDT_seed(uint64_t new_seed) {
 
 using namespace Rcpp;
 // [[Rcpp::export]]
-NumericMatrix diffusion_SDT_sim2(int N, double a, double v, double t0,
+NumericMatrix diffusion_SDT2(int N, double a, double v, double t0,
                                 double z, double sz = 0, double sv = 0,
                                 double st0 = 0, double s = 1,
                                 NumericVector crit = NumericVector::create(0, 0)) {
 
   dqrng::dqRNGkind("pcg64");
-  dqrng::dqset_seed(abs(rng()));
-  rng.backstep(1);
+  dqrng::dqset_seed(seed);
+  seed = global_rng();
 
   NumericMatrix sim_data(N, 3);
   colnames(sim_data) = CharacterVector::create("RT", "speeded_resp","delayed_resp");
@@ -143,7 +145,7 @@ struct Diffusion : public Worker
   {}
   
   void operator()(std::size_t begin, std::size_t end) {
-    rng.set_stream(end);
+    pcg64 rng(seed, end);
 
     dqrng::normal_distribution evidence_dist(v, sv);
     dqrng::normal_distribution noise(0, s);
@@ -206,6 +208,8 @@ Rcpp::NumericVector diffusion_SDT(int N, double a, double v, double t0,
   Diffusion diffusion(sim_data, a, v, t0, z, sz, sv, st0, s, crit, dt);
   RcppParallel::parallelFor(0, N, diffusion, N/nThreads());
   
-  sim_data.attr("class") = CharacterVector::create("diffusion_SDT","matrix");
+  seed = global_rng();
+  sim_data.attr("class") = CharacterVector::create("diffusion_SDT","matrix");  
+  
   return sim_data;
 }
