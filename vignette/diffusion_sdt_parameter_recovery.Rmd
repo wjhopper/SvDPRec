@@ -224,24 +224,28 @@ samples <- foreach(p_row = iterators::iter(select(parameters, -id), "row")) %do%
 rm(data, raw_data, theta, p_row)
 ```
 
-    fit <- optimx(theta,
+```{r null_g2_recovery, cache=TRUE, dependson=c("diffusion_functions")}
+null_fit_optimx <- foreach(s = samples,
+                           .noexport = c("diffusion_SDT"),
+                           .packages = c("optimx", "dplyr" , "tidyr")
+                           ) %dopar% {
+
+    fit <- optimx(s$theta,
                   fn = diffusion_obj,
                   method = c("L-BFGS-B"),
                   itnmax = 1000,
                   lower = c(0, -10, 0,    0, 0,    0, 0,    -4, -4),
                   upper = c(4,  10, 0.75, 1, 0.75, 6, 0.75,  4,  4),
                   control = list(kkt=FALSE, maxit=1000, starttests=FALSE),
-                  data = data
+                  data = s$data
                   )
-    list(theta=theta, data=data, fit=fit)
+    fit
   }
 
-
-diffusion_fits <- lapply(lapply(fits, `[[`, 'fit'),
-                         tibble::rownames_to_column, var="method") %>%
+null_fits <- lapply(null_fit_optimx, tibble::rownames_to_column, var="method") %>%
   bind_rows()
-GOF <- select(diffusion_fits, fevals, gevals, niter, convcode, value)
-bf_parameters <- select(diffusion_fits, !!!names(parameters)[-1])
+null_GOF <- select(null_fits, fevals, gevals, niter, convcode, value)
+null_bf_parameters <- select(null_fits, !!!names(parameters)[-1])
 ```
 
 ```{r null_g2_recovery_plot}
