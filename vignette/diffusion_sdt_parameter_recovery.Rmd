@@ -249,13 +249,13 @@ null_bf_parameters <- select(null_fits, !!!names(parameters)[-1])
 ```
 
 ```{r null_g2_recovery_plot}
-nCells <- sapply(fits, function(x) nrow(x$data))
-weights <- as.vector(table(nCells))/length(fits)
+nCells <- sapply(samples, function(x) nrow(x$data))
+weights <- as.vector(table(nCells))/length(null_fits)
 
-densities <- hist(GOF$value, freq = FALSE,
-                  breaks=seq(0,max(GOF$value)+1, 1), 
+densities <- hist(null_GOF$value, freq = FALSE,
+                  breaks=seq(0,max(null_GOF$value)+1, 1),
                   main=expression(paste(G^2, " for Joint Counts")))
-xaxis <- seq(0, max(GOF$value), .1)
+xaxis <- seq(0, max(null_GOF$value), .1)
 chi_density <-
   dchisq(xaxis, 5)*weights[1] +
   dchisq(xaxis, 11)*weights[2] +
