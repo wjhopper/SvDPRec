@@ -1,5 +1,5 @@
 ---
-title: "Diffusion Simuation Comparisons"
+title: "Diffusion Simulation Comparisons"
 author: "Will Hopper"
 date: "`r format(Sys.Date(), '%b %d, %Y')`"
 output:
@@ -40,13 +40,16 @@ sample_parameters <- function(N=500) {
                            v = rnorm(N),
                            t0 = runif(N, 0, .5),
                            z = runif(N, .1, .9),
-                           sz = runif(N, 0, .5),
+                           sz = runif(N, .1, .9),
                            sv = rexp(N, 2),
                            st0 = runif(N, 0, .25),
                            crit_old = runif(N, -1,0),
                            crit_new = runif(N, 0, 1)
-  )
+                           )
   parameters$z <- parameters$z * parameters$a # convert relative to absolute 
+  dist_to_closest_boundary <- pmin(parameters$a - parameters$z,
+                                   parameters$z)
+  parameters$sz <- parameters$sz * dist_to_closest_boundary
   return(parameters)
 }
 
