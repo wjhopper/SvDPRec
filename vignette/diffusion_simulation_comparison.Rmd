@@ -221,15 +221,19 @@ ggplot(samples, aes(x=mine_R, y=mine, color=factor(response))) +
 ```
 
 
-```{r RT, cache=TRUE, cache.extra=list(diffusion_SDT_R, tools::md5sum(file.path(root_dir, "src", "diffusion.cpp")))}
+```{r RT, cache=TRUE, cache.extra=list(diffusion_SDT_R, tools::md5sum(file.path(root_dir, "src", "diffusion.cpp"))), fig.width=8}
 A <- as.data.frame(diffusion_SDT(1e6, a=1.5, v=1, t0=.5, z=.6, sz=.25, st0=.25, sv=.5)[,1:2])
-names(A)[1] <- "rt"
+names(A) <- c("rt", "response")
 B <- rdiffusion(1e6, a=1.5, v=1, t0=.5, z=.6, sz=.25, st0=.25, sv=.5)
-C <- bind_rows("diffusion_SDT" = A[, 1, drop=FALSE],
-               "rdiffusion" = B[, 1, drop=FALSE],
-               .id ="type") %>%
+B$response <- as.numeric(B$response) - 1
+rt_distributions <- bind_rows("diffusion_SDT" = A,
+                              "rdiffusion" = B,
+                              .id = "type") %>%
   filter(rt <= 4)
-ggplot(C, aes(x=rt,color=type)) + 
+ggplot(rt_distributions, aes(x=rt,color=type)) + 
   geom_density() +
-  xlim(0,4)
+  facet_grid(~response) +
+  xlim(0,4) +
+  theme(legend.position = "top")
+rm(A, B)
 ```
