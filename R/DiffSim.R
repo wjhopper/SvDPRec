@@ -1,4 +1,4 @@
-diffusion_SDT <- function(N, a, v, t0, z, sv, st0, sz=0, s=1, crit=c(0, 0)) {
+diffusion_SDT <- function(N, a, v, t0, z, sz=0, sv=0, st0=0, s=1, crit=c(0, 0)) {
 
   dt <- .001 # time step size
 
