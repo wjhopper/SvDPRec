@@ -65,7 +65,7 @@ NumericMatrix diffusion_SDT2(int N, double a, double v, double t0,
     double pos = start_points[i];
     double v_inst = drifts[i];
   
-    while(!(pos > a || pos < 0 )) {
+    while(pos < a && pos > 0) {
       step += 1;
       pos +=  dqrng::rnorm(v_inst, s);
     }

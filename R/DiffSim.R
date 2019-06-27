@@ -23,7 +23,7 @@ diffusion_SDT <- function(N, a, v, t0, z, sz=0, sv=0, st0=0, s=1, crit=c(0, 0)) 
     pos <- start_points[i]
     v_inst <- drifts[i]
 
-    while(!(pos > a | pos < 0 )) {
+    while(pos < a && pos > 0) {
       step <- step + 1
       pos <- pos + rnorm(1, v_inst, s)
     }
