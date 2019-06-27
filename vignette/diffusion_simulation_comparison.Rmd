@@ -77,7 +77,7 @@ samples <- foreach(p_row = iterators::iter(select(parameters, -id), "row"),
                    .noexport = c("diffusion_SDT"),
                    .packages = c("optimx", "dplyr" , "tidyr" ,"rtdists")) %dopar% 
   {
-    Nsim = 5000
+    Nsim = 50000
     theta <- unlist(p_row)
     p <- p1 <- p2 <- p3 <- numeric(12)
 
