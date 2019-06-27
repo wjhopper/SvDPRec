@@ -237,3 +237,44 @@ ggplot(rt_distributions, aes(x=rt,color=type)) +
   theme(legend.position = "top")
 rm(A, B)
 ```
+
+```{r differences, fig.height=10, fig.width=8}
+X <- ungroup(samples) %>%
+  filter(quantiles==.1) %>%
+  mutate(id = as.numeric(id),
+         diff = true - mine)
+Y <- inner_join(parameters,
+                select(X, id, response, diff),
+                by="id"
+                )
+Z <- gather(Y, key="parameter", value="value", -id, -diff, -response)
+
+ggplot(filter(Z, response==0), aes(x=value, y=diff)) +
+  geom_point() +
+  ylab("True - diffusion_SDT counts") +
+  facet_wrap(~parameter, scales="free") +
+  ggtitle("Lower Boundary Responses")
+
+ggplot(filter(Z, response==1), aes(x=value, y=diff)) +
+  geom_point()+
+  ylab("True - diffusion_SDT counts") +
+  facet_wrap(~parameter, scales="free") +
+  ggtitle("Upper Boundary Responses")
+```
+
+```{r RT2, cache=TRUE, cache.extra=list(diffusion_SDT_R, tools::md5sum(file.path(root_dir, "src", "diffusion.cpp"))), fig.width=8}
+A <- as.data.frame(diffusion_SDT(1e6, a=1.5, v=1, t0=.5, z=.1, st0=.25, sv=.5)[,1:2])
+names(A) <- c("rt", "response")
+B <- rdiffusion(1e6, a=1.5, v=1, t0=.5, z=.1, st0=.25, sv=.5)
+B$response <- as.numeric(B$response) - 1
+rt_distributions2 <- bind_rows("diffusion_SDT" = A,
+                               "rdiffusion" = B,
+                               .id = "type") %>%
+  filter(rt <= 4)
+ggplot(rt_distributions2, aes(x=rt,color=type)) +
+  geom_density() +
+  facet_grid(~response) +
+  xlim(0,4) +
+  theme(legend.position = "top")
+rm(A, B)
+```
