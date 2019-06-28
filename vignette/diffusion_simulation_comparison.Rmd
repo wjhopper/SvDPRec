@@ -24,7 +24,9 @@ library(tidyr)
 library(RcppParallel)
 library(dqrng)
 library(iterators)
+library(doRNG)
 root_dir <- rprojroot::is_rstudio_project$find_file()
+RcppParallel::setThreadOptions(1)
 ```
 
 ```{r functions}
@@ -56,21 +58,30 @@ sample_parameters <- function(N=500) {
 ```
 
 ```{r start_cluster, echo=FALSE}
-RcppParallel::setThreadOptions(1)
+cluster_setup <- function(cppFiles, threads=RcppParallel::defaultNumThreads(), lib_paths = .libPaths()) {
+  .libPaths(lib_paths)
+  for (f in cppFiles) {
+    Rcpp::sourceCpp(f)
+  }
+  RcppParallel::setThreadOptions(threads)
+  set_diffusion_SDT_seed(42)
+}
 
 cl <- parallel::makeCluster(parallel::detectCores(),
                             outfile = "",
                             methods = FALSE)
-invisible(parallel::clusterCall(cl, function(x) {.libPaths(x)},
-                                x = .libPaths())
-          )
-invisible(parallel::clusterCall(cl, function(x) {Rcpp::sourceCpp(x)},
-                                x = file.path(root_dir, "src", "diffusion.cpp"))
+invisible(parallel::clusterCall(cl, cluster_setup,
+                                cppFiles = file.path(root_dir, "src", "diffusion.cpp"),
+                                threads  = 1,
+                                lib_paths = .libPaths()
+                                )
           )
 doParallel::registerDoParallel(cl)
+doRNG::registerDoRNG(seed=42)
 ```
 
 ```{r simulations, cache=TRUE, cache.extra=list(diffusion_SDT_R, tools::md5sum(file.path(root_dir, "src", "diffusion.cpp")))}
+set.seed(42)
 parameters <- sample_parameters(500)
 
 samples <- foreach(p_row = iterators::iter(select(parameters, -id), "row"),
