@@ -357,9 +357,10 @@ rdiffusion_obj <- function(theta, data, fixed=NULL, Nsim=5e4) {
   boundaries <- c(0,1) # Boundaries to loop over
   
   set.seed(42)
-  sim_data <- rdiffusion(n=Nsim, a = theta["a"], z = theta['z'],
-                         v = theta["v"], sv = theta["sv"],
-                         t0 = theta["t0"], st0 = theta["st0"],
+  sim_data <- rdiffusion(n=Nsim,
+                         a = theta[1], v = theta[2],
+                         t0 = theta[3], z = theta[4],
+                         sv = theta["sv"], st0 = theta["st0"],
                          stop_on_error=FALSE)
   sim_data$response <- as.numeric(sim_data$response) - 1
   sim_data <- as.matrix(sim_data)
@@ -413,9 +414,10 @@ diffusion_SDT_collapsed_obj <- function(theta, data, fixed=NULL, Nsim=5e4) {
   theta <- c(theta, fixed)
   boundaries <- c(0,1) # Boundaries to loop over
   set_diffusion_SDT_seed(42)
-  sim_data <- diffusion_SDT(Nsim, a = theta["a"], z = theta['z'],
-                            v = theta["v"], sv = theta["sv"],
-                            t0 = theta["t0"], st0 = theta["st0"]
+  sim_data <- diffusion_SDT(Nsim, a = theta[1], v = theta[2],
+                            t0 = theta[3], z = theta[4],
+                            sv = theta["sv"], st0 = theta["st0"],
+                            crit = theta[c("crit_old","crit_new")]
                             )
 
   p <- numeric(nrow(data))
@@ -461,43 +463,45 @@ diffusion_SDT_collapsed_obj <- function(theta, data, fixed=NULL, Nsim=5e4) {
 }
 
 collapsed_fits_optimx <- foreach(s = samples,
+                                 .errorhandling = 'pass',
                                  .noexport = c("diffusion_SDT", "set_diffusion_SDT_seed"),
                                  .packages = c("optimx", "dplyr", "tidyr", "rtdists")) %dopar% 
   {
+
     data <- group_by(s$data, speeded_resp, quantile, RT) %>%
       summarise(bin_counts = sum(bin_counts))
-    
+
     rdiffusion_fits <- list()
     diffusion_SDT_fits <- list()
-    
+
     random_starts <- sample_parameters(2)[,-1]
-    
+
     for (n in 1:nrow(random_starts)) {
 
       starting_theta <- unlist(random_starts[n,])
-      
+
       rdiffusion_fits[[n]] <- 
         optimx(starting_theta[c("a","v","t0","z")],
                fn = rdiffusion_obj,
-               method = c("L-BFGS-B"),
+               method = c("nmkb"),
                itnmax = 1000,
                lower = c(0.01, -5, 0.01, 0.01),
                upper = c(2.5,   5, 0.75, 2.49),
-               control = list(kkt=FALSE, maxit=1000, starttests=FALSE),
+               control = list(kkt=FALSE, maxit=1000),
                data = data,
-               fixed = s$theta[c("sz","sv","st0")]
+               fixed = s$theta[c("sz","sv","st0","crit_old","crit_new")]
                )
-      
+
       diffusion_SDT_fits[[n]] <- 
         optimx(starting_theta[c("a","v","t0","z")],
                fn = diffusion_SDT_collapsed_obj,
-               method = c("L-BFGS-B"),
+               method = c("nmkb"),
                itnmax = 1000,
                lower = c(0.01, -5, 0.01, 0.01),
                upper = c(2.5,   5, 0.75, 2.49),
-               control = list(kkt=FALSE, maxit=1000, starttests=FALSE),
+               control = list(kkt=FALSE, maxit=1000),
                data = data,
-               fixed = s$theta[c("sz","sv","st0")]
+               fixed = s$theta[c("sz","sv","st0","crit_old","crit_new")]
                )
     }
     
