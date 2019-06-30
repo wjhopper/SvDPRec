@@ -9,6 +9,19 @@ output:
 editor_options:
   chunk_output_type: console
 ---
+This documents reports a comparison between 3 implementations of the Ratcliff diffusion model. The implementations are:
+
+1. The "reference" implementation in the `rtdists` R package, which uses the `fast_dm` code of Voss & Voss.
+2. A pure R simulation implementation by Hopper, sourced from the accompanying `DiffSim.R` file.
+3. A C++ simulation implementation by Hopper (using Rcpp and RcppParallel), sourced from the accompanying `diffusion.cpp` file.
+
+To compare these implementations, we will sample 500 random sets of parameters, simulate responses from the diffusion model under each implementation, and measure the number of responses in the bins defined by the .1, .3, .5, .7, and .9 quantiles.
+
+The RT quantile cutoffs for each bin are determined using the qdiffusion function (the defective quantile function from the `rtdists` package). 
+
+Counts from the model implementation in the `rtdists` package are generated using both the `rdiffusion` function (for sampling random trials) and the `pdiffusion` function (the cumulative distribution function), which is referred to as the "true" counts. Random draws are obtained in the `rdiffusion` function by taking samples from a random uniform distribution between 0 and 1, and running each samples through the quantile function to obtain an RT and response.
+
+The code for running these simulations is below. All simulations are performed using 50,000 random trials.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(fig.align = "center")
@@ -157,6 +170,14 @@ samples <- bind_rows(samples, .id="id") %>%
   mutate_at(c("mine","mine_R","rtdists","true"), within_bin_counts)
 ```
 
+## Results
+
+The 6 scatter plots below compare the counts in each bin between all pairs of model implementations. Several relationships are readily apparent:
+
+1. The `rdiffusion` and `pdiffusion` functions produce highly consistent results
+2. The `diffusion_SDT` and `diffusion_SDT_R` functions produce highly consistent results.
+3. The two simulation implementations by Hopper produce qualitatively different results than the reference implementation.
+
 ```{r count_plots, echo=FALSE, fig.width=7, fig.height=8.5}
 ggplot(samples, aes(x=mine, y=true, color=factor(response))) + 
   geom_point() + 
@@ -231,7 +252,12 @@ ggplot(samples, aes(x=mine_R, y=mine, color=factor(response))) +
   ggtitle("diffusion_SDT in C++ vs. diffusion_SDT in R")
 ```
 
+The nature of this qualitative difference is most clearly seen in the counts falling into the first decile bin. The two simulation methods, diffusion_SDT` and `diffusion_SDT_R`, produce far fewer response in this bin than the `rdiffusion` and `pdiffusion` implementations. Complementing this difference, the two simulation methods produce more responses in the bin defined by the .9 quantile than the reference implementation. In other words, it appears the RT's produced by the two simulation methods are slower than the reference implementation.
 
+## RT Densities
+To investigate the nature of this difference further, let's compare the RT distribution density estimates between these implementations. Because the `rdiffusion` and `pdiffusion` strongly agree, and the the `diffusion_SDT` and `diffusion_SDT_R` functions also strongly agree, we'll focus on comparing one member from each group. Here, we choose to focus on the C++ simulation (the `diffusion_SDT` function) and the `rdiffusion` function.
+
+We'll do two new simulations, using the set of parameters that produced the smallest absolute differences between methods, and the set of parameters that produced the largest absolute differences between methods. We begin with the "best" set of parameters:
 
 ```{r differences, fig.height=10, fig.width=8}
 X <- ungroup(samples) %>%
@@ -242,19 +268,7 @@ Y <- inner_join(parameters,
                 select(X, id, response, diff),
                 by="id"
                 )
-Z <- gather(Y, key="parameter", value="value", -id, -diff, -response)
 
-ggplot(filter(Z, response==0), aes(x=value, y=diff)) +
-  geom_point() +
-  ylab("True - diffusion_SDT counts") +
-  facet_wrap(~parameter, scales="free") +
-  ggtitle("Lower Boundary Responses")
-
-ggplot(filter(Z, response==1), aes(x=value, y=diff)) +
-  geom_point()+
-  ylab("True - diffusion_SDT counts") +
-  facet_wrap(~parameter, scales="free") +
-  ggtitle("Upper Boundary Responses")
 ```
 
 ```{r good_RT_dist, cache=TRUE, cache.extra=list(diffusion_SDT_R, tools::md5sum(file.path(root_dir, "src", "diffusion.cpp"))), fig.width=8}
@@ -270,8 +284,7 @@ theta <- unlist(theta)
 
 A <- as.data.frame(diffusion_SDT(1e6, a = theta["a"], z = theta['z'],
                                  v = theta["v"], sv = theta["sv"],
-                                 t0 = theta["t0"], st0 = theta["st0"],
-                                 crit = theta[c("crit_old", "crit_new")]
+                                 t0 = theta["t0"], st0 = theta["st0"]
                                  )
                    ) %>%
   select(rt = RT, response = speeded_resp)
@@ -294,6 +307,7 @@ ggplot(rt_distributions, aes(x=rt,color=type)) +
 rm(A, B)
 ```
 
+Now, the "worst" set
 ```{r bad_RT_dist, cache=TRUE, cache.extra=list(diffusion_SDT_R, tools::md5sum(file.path(root_dir, "src", "diffusion.cpp"))), fig.width=8}
 
 theta <- filter(Y, diff == max(diff)) %>%
@@ -307,8 +321,7 @@ theta <- unlist(theta)
 
 A <- as.data.frame(diffusion_SDT(1e6, a = theta["a"], z = theta['z'],
                                  v = theta["v"], sv = theta["sv"],
-                                 t0 = theta["t0"], st0 = theta["st0"],
-                                 crit = theta[c("crit_old", "crit_new")]
+                                 t0 = theta["t0"], st0 = theta["st0"]
                                  )
                    ) %>%
   select(rt = RT, response = speeded_resp)
@@ -328,5 +341,57 @@ ggplot(rt_distributions2, aes(x=rt,color=type)) +
   geom_density() +
   facet_grid(~response, labeller = label_both) +
   theme(legend.position = "top")
-rm(A, B)
+
 ```
+
+```{r quantile_difference, echo=FALSE}
+q_sim_0 <- quantile(filter(A, response==0)$rt, .1)
+q_rtdists_0<- quantile(filter(B, response==0)$rt, .1)
+
+q_sim_1 <- quantile(filter(A, response==1)$rt, .1)
+q_rtdists_1<- quantile(filter(B, response==1)$rt, .1)
+```
+
+
+We can see that for both the "best" and "worst", the distribution produced by the `diffusion_SDT` simulation method is right-shifted relative to the `rdiffusion` implementation, though the shift is more pronounced for the "worst" parameter set.
+
+## Counts vs. Parameters
+To try to understand why these two groups of implementations produce comparable, but not precisely similar results, we will try to relate the sampled parameter values to "error" between the `diffusion_SDT` function and the `rdiffusion` function.
+
+We'll focus on differences in the first decile, since the differences are most pronounced there. The scatter plots below show "error" associated with each sampled parameter value.
+
+```{r differences_plot, echo=FALSE}
+Z <- gather(Y, key="parameter", value="value", -id, -diff, -response)
+
+ggplot(filter(Z, response==0), aes(x=value, y=diff)) +
+  geom_point() +
+  ylab("True - diffusion_SDT counts") +
+  facet_wrap(~parameter, scales="free") +
+  ggtitle("Lower Boundary Responses")
+
+ggplot(filter(Z, response==1), aes(x=value, y=diff)) +
+  geom_point()+
+  ylab("True - diffusion_SDT counts") +
+  facet_wrap(~parameter, scales="free") +
+  ggtitle("Upper Boundary Responses")
+```
+
+These plots show that the degree of "error" between the two implementation depends on the value of the Z parameter, which controls the starting point of the evidence accumulation process. This relationship is most apparent for lower boundary, or "0" responses. When the Z parameter is closer to the lower boundary than the upper, the degree of error is very high.
+
+Thus, it appears that the `diffusion_SDT` simulation is "too noisy" relative to the `rdiffusion` simulation - the accumulator is not hitting the response boundary a quickly as it should, especially when it begins very close to a boundary. 
+
+However, it should be noted that despite large differences in counts, the value of the RT quantiles between these two methods are not very different. For example, using the "worst" set off parameters from earlier, the difference between the RT cutoff value for the first decile of lower boundary responses was `r abs(q_rtdists_0 - q_sim_0)*1000` milliseconds, and the difference between the RT cutoff value for the first decile of upper boundary responses was `r abs(q_rtdists_1 - q_sim_1)*1000` milliseconds
+
+
+## Improvements
+Using a smaller time step size (1/10 of a millisecond instead of 1 millisecond) for the `diffusion_SDT` and `diffusion_SDT_R` reduces the "error" between these implementations and the `rtdists` reference implementation, but does not eliminate it.
+
+However, it is unclear if this is the "real" solution. It may be that this change helps "mask" an error in the `diffusion_SDT` and `diffusion_SDT_R` simulation implementations. Reducing time step size by a factor of 10 also slows the simulations by a factor of 10.
+
+## Session Info
+
+
+```{r}
+sessionInfo()
+```
+
