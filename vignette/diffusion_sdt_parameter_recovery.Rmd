@@ -191,6 +191,25 @@ invisible(parallel::clusterCall(cl, cluster_setup,
                                 )
           )
 doParallel::registerDoParallel(cl)
+doRNG::registerDoRNG(seed=42)
+```
+
+```{r sample_parameters, cache=TRUE, dependson=c("diffusion_functions")}
+parameters <- sample_parameters(1000)
+
+samples <- foreach(p_row = iterators::iter(select(parameters, -id), "row")) %do%
+  {
+
+    theta <- unlist(p_row)
+    raw_data <- diffusion_SDT(1000, a = theta["a"], z = theta['z'],
+                              v = theta["v"], sv = theta["sv"],
+                              t0 = theta["t0"], st0 = theta["st0"],
+                              crit = theta[c("crit_old","crit_new")]
+                             )
+    data <- summary.diffusion_SDT(raw_data)
+    list(theta=theta, data=data)
+  }
+rm(data, raw_data, theta, p_row)
 ```
 
 ```{r null_g2, cache=TRUE, dependson=c("diffusion_functions")}
@@ -222,24 +241,6 @@ legend(x=max(G2)-20, y = max(densities$density),
        lty=c(1),
        legend=expression(chi[23]^2),
        lwd=2, bty = 'n')
-```
-
-```{r sample_parameters, cache=TRUE, dependson=c("diffusion_functions")}
-parameters <- sample_parameters(1000)
-
-samples <- foreach(p_row = iterators::iter(select(parameters, -id), "row")) %do%
-  {
-
-    theta <- unlist(p_row)
-    raw_data <- diffusion_SDT(1000, a = theta["a"], z = theta['z'],
-                              v = theta["v"], sv = theta["sv"],
-                              t0 = theta["t0"], st0 = theta["st0"],
-                              crit = theta[c("crit_old","crit_new")]
-                             )
-    data <- summary.diffusion_SDT(raw_data)
-    list(theta=theta, data=data)
-  }
-rm(data, raw_data, theta, p_row)
 ```
 
 ```{r null_g2_recovery, cache=TRUE, dependson=c("diffusion_functions","sample_parameters")}
