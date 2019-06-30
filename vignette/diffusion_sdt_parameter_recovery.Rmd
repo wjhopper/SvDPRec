@@ -36,19 +36,22 @@ sourceCpp(file.path(root_dir, "src", "diffusion.cpp"),
           cacheDir = libdir)
 
 sample_parameters <- function(N=500) {
-
+  
   parameters <- data.frame(id = 1:N,
                            a = runif(N, .5, 1.5),
                            v = rnorm(N),
                            t0 = runif(N, 0, .5),
-                           z = runif(N),
-                           sz = runif(N, 0, .5),
+                           z = runif(N, .1, .9),
+                           sz = runif(N, .1, .9),
                            sv = rexp(N, 2),
                            st0 = runif(N, 0, .25),
                            crit_old = runif(N, -1,0),
                            crit_new = runif(N, 0, 1)
                            )
-  parameters$z <- parameters$z * parameters$a
+  parameters$z <- parameters$z * parameters$a # convert relative to absolute 
+  dist_to_closest_boundary <- pmin(parameters$a - parameters$z,
+                                   parameters$z)
+  parameters$sz <- parameters$sz * dist_to_closest_boundary
   return(parameters)
 }
 
