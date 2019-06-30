@@ -232,22 +232,6 @@ ggplot(samples, aes(x=mine_R, y=mine, color=factor(response))) +
 ```
 
 
-```{r RT, cache=TRUE, cache.extra=list(diffusion_SDT_R, tools::md5sum(file.path(root_dir, "src", "diffusion.cpp"))), fig.width=8}
-A <- as.data.frame(diffusion_SDT(1e6, a=1.5, v=1, t0=.5, z=.6, sz=.25, st0=.25, sv=.5)[,1:2])
-names(A) <- c("rt", "response")
-B <- rdiffusion(1e6, a=1.5, v=1, t0=.5, z=.6, sz=.25, st0=.25, sv=.5)
-B$response <- as.numeric(B$response) - 1
-rt_distributions <- bind_rows("diffusion_SDT" = A,
-                              "rdiffusion" = B,
-                              .id = "type") %>%
-  filter(rt <= 4)
-ggplot(rt_distributions, aes(x=rt,color=type)) + 
-  geom_density() +
-  facet_grid(~response) +
-  xlim(0,4) +
-  theme(legend.position = "top")
-rm(A, B)
-```
 
 ```{r differences, fig.height=10, fig.width=8}
 X <- ungroup(samples) %>%
@@ -273,19 +257,76 @@ ggplot(filter(Z, response==1), aes(x=value, y=diff)) +
   ggtitle("Upper Boundary Responses")
 ```
 
-```{r RT2, cache=TRUE, cache.extra=list(diffusion_SDT_R, tools::md5sum(file.path(root_dir, "src", "diffusion.cpp"))), fig.width=8}
-A <- as.data.frame(diffusion_SDT(1e6, a=1.5, v=1, t0=.5, z=.1, st0=.25, sv=.5)[,1:2])
-names(A) <- c("rt", "response")
-B <- rdiffusion(1e6, a=1.5, v=1, t0=.5, z=.1, st0=.25, sv=.5)
-B$response <- as.numeric(B$response) - 1
+```{r good_RT_dist, cache=TRUE, cache.extra=list(diffusion_SDT_R, tools::md5sum(file.path(root_dir, "src", "diffusion.cpp"))), fig.width=8}
+
+theta <- filter(Y, diff == min(abs(diff))) %>%
+  slice(1) %>%
+  select(a, v, t0, z, sz, sv, st0)
+
+kable(theta,format = "html", digits=3) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+theta <- unlist(theta)
+
+A <- as.data.frame(diffusion_SDT(1e6, a = theta["a"], z = theta['z'],
+                                 v = theta["v"], sv = theta["sv"],
+                                 t0 = theta["t0"], st0 = theta["st0"],
+                                 crit = theta[c("crit_old", "crit_new")]
+                                 )
+                   ) %>%
+  select(rt = RT, response = speeded_resp)
+
+B <- rdiffusion(1e6, a = theta["a"], z = theta['z'],
+                v = theta["v"], sv = theta["sv"],
+                t0 = theta["t0"], st0 = theta["st0"]
+                ) %>%
+  mutate(response = as.numeric(response) - 1)
+
+rt_distributions <- bind_rows("diffusion_SDT" = A,
+                               "rdiffusion" = B,
+                               .id = "type") %>%
+  filter(rt <= quantile(rt, .999))
+
+ggplot(rt_distributions, aes(x=rt,color=type)) +
+  geom_density() +
+  facet_grid(~response, labeller = label_both) +
+  theme(legend.position = "top")
+rm(A, B)
+```
+
+```{r bad_RT_dist, cache=TRUE, cache.extra=list(diffusion_SDT_R, tools::md5sum(file.path(root_dir, "src", "diffusion.cpp"))), fig.width=8}
+
+theta <- filter(Y, diff == max(diff)) %>%
+  slice(1) %>%
+  select(a, v, t0, z, sz, sv, st0)
+
+kable(theta,format = "html", digits=3) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+theta <- unlist(theta)
+
+A <- as.data.frame(diffusion_SDT(1e6, a = theta["a"], z = theta['z'],
+                                 v = theta["v"], sv = theta["sv"],
+                                 t0 = theta["t0"], st0 = theta["st0"],
+                                 crit = theta[c("crit_old", "crit_new")]
+                                 )
+                   ) %>%
+  select(rt = RT, response = speeded_resp)
+
+B <- rdiffusion(1e6, a = theta["a"], z = theta['z'],
+                v = theta["v"], sv = theta["sv"],
+                t0 = theta["t0"], st0 = theta["st0"]
+                ) %>%
+  mutate(response = as.numeric(response) - 1)
+
 rt_distributions2 <- bind_rows("diffusion_SDT" = A,
                                "rdiffusion" = B,
                                .id = "type") %>%
-  filter(rt <= 4)
+  filter(rt <= quantile(rt, .999))
+
 ggplot(rt_distributions2, aes(x=rt,color=type)) +
   geom_density() +
-  facet_grid(~response) +
-  xlim(0,4) +
+  facet_grid(~response, labeller = label_both) +
   theme(legend.position = "top")
 rm(A, B)
 ```
