@@ -533,6 +533,7 @@ inner_join(gather(collapsed_parameters, key="parameter", value="est", -id, -type
            ) %>%
   ggplot(aes(x=real,y=est)) +
   geom_point() +
+  geom_abline(slope = 1, intercept = 0) +
   facet_grid(parameter~type, scales = "free")
 
 chi_cutoff <- qchisq(.999, 11)
