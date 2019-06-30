@@ -28,7 +28,7 @@ library(doRNG)
 root_dir <- rprojroot::is_rstudio_project$find_file()
 ```
 
-```{r diffusion_functions}
+```{r diffusion_functions, cache=TRUE, cache.extra=tools::md5sum(file.path(root_dir, "src", "diffusion.cpp"))}
 libdir <- file.path(root_dir, "src", "libs")
 if (!dir.exists(libdir)) {
   dir.create(libdir)
