@@ -9,6 +9,11 @@ output:
 editor_options:
   chunk_output_type: console
 ---
+
+```{css, echo=FALSE}
+p { font-size: 16px; }
+```
+
 This documents reports a comparison between 3 implementations of the Ratcliff diffusion model. The implementations are:
 
 1. The "reference" implementation in the `rtdists` R package, which uses the `fast_dm` code of Voss & Voss.
@@ -273,7 +278,7 @@ Y <- inner_join(parameters,
 
 ```{r good_RT_dist, cache=TRUE, cache.extra=list(diffusion_SDT_R, tools::md5sum(file.path(root_dir, "src", "diffusion.cpp"))), fig.width=8}
 
-theta <- filter(Y, diff == min(abs(diff))) %>%
+theta <- filter(Y, abs(diff) == min(abs(diff))) %>%
   slice(1) %>%
   select(a, v, t0, z, sz, sv, st0)
 
@@ -360,7 +365,7 @@ To try to understand why these two groups of implementations produce comparable,
 
 We'll focus on differences in the first decile, since the differences are most pronounced there. The scatter plots below show "error" associated with each sampled parameter value.
 
-```{r differences_plot, echo=FALSE}
+```{r differences_plot, echo=FALSE, fig.width=9, fig.height=9}
 Z <- gather(Y, key="parameter", value="value", -id, -diff, -response)
 
 ggplot(filter(Z, response==0), aes(x=value, y=diff)) +
@@ -380,7 +385,7 @@ These plots show that the degree of "error" between the two implementation depen
 
 Thus, it appears that the `diffusion_SDT` simulation is "too noisy" relative to the `rdiffusion` simulation - the accumulator is not hitting the response boundary a quickly as it should, especially when it begins very close to a boundary. 
 
-However, it should be noted that despite large differences in counts, the value of the RT quantiles between these two methods are not very different. For example, using the "worst" set off parameters from earlier, the difference between the RT cutoff value for the first decile of lower boundary responses was `r abs(q_rtdists_0 - q_sim_0)*1000` milliseconds, and the difference between the RT cutoff value for the first decile of upper boundary responses was `r abs(q_rtdists_1 - q_sim_1)*1000` milliseconds
+However, it should be noted that despite large differences in counts, the value of the RT quantiles between these two methods are not very different. For example, using the "worst" set off parameters from earlier, the difference between the RT cutoff value for the first decile of lower boundary responses was `r round(abs(q_rtdists_0 - q_sim_0)*1000, 3)` milliseconds, and the difference between the RT cutoff value for the first decile of upper boundary responses was `r round(abs(q_rtdists_1 - q_sim_1)*1000, 3)` milliseconds
 
 
 ## Improvements
