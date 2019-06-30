@@ -24,6 +24,7 @@ library(tidyr)
 library(RcppParallel)
 library(dqrng)
 library(iterators)
+library(doRNG)
 root_dir <- rprojroot::is_rstudio_project$find_file()
 ```
 
@@ -167,14 +168,27 @@ diffusion_obj <- function(theta, data, fixed=NULL, Nsim=5e4){
 ```{r start_cluster}
 RcppParallel::setThreadOptions(1)
 
+cluster_setup <- function(cppFiles, lib_paths = .libPaths(),
+                          threads=RcppParallel::defaultNumThreads()) {
+  # Set lib paths on nodes to same libpaths as "master"
+  .libPaths(lib_paths)
+  # Compile any necceary C++ files on each node
+  for (f in cppFiles) {
+    Rcpp::sourceCpp(f)
+  }
+  # Set the number of threads available for RcppParallel workeres
+  RcppParallel::setThreadOptions(threads)
+  set_diffusion_SDT_seed(42)
+}
+
 cl <- parallel::makeCluster(parallel::detectCores(),
                             outfile = "",
                             methods = FALSE)
-invisible(parallel::clusterCall(cl, function(x) {.libPaths(x)},
-                                x = .libPaths())
-          )
-invisible(parallel::clusterCall(cl, function(x) {Rcpp::sourceCpp(x)},
-                                x = file.path(root_dir, "src", "diffusion.cpp"))
+invisible(parallel::clusterCall(cl, cluster_setup,
+                                cppFiles = file.path(root_dir, "src", "diffusion.cpp"),
+                                threads  = 1,
+                                lib_paths = .libPaths()
+                                )
           )
 doParallel::registerDoParallel(cl)
 ```
