@@ -195,7 +195,7 @@ doRNG::registerDoRNG(seed=42)
 ```
 
 ```{r sample_parameters, cache=TRUE, dependson=c("diffusion_functions")}
-parameters <- sample_parameters(1000)
+parameters <- sample_parameters(500)
 
 samples <- foreach(p_row = iterators::iter(select(parameters, -id), "row")) %do%
   {
@@ -450,7 +450,7 @@ collapsed_fits_optimx <- foreach(s = samples,
                fn = rdiffusion_obj,
                method = c("nmkb"),
                itnmax = 1000,
-               lower = c(0.01, -5, 0.01, 0.01),
+               lower = c(0.01, -5, 0,    0.01),
                upper = c(2.5,   5, 0.75, 2.49),
                control = list(kkt=FALSE, maxit=1000),
                data = data,
@@ -462,7 +462,7 @@ collapsed_fits_optimx <- foreach(s = samples,
                fn = diffusion_SDT_collapsed_obj,
                method = c("nmkb"),
                itnmax = 1000,
-               lower = c(0.01, -5, 0.01, 0.01),
+               lower = c(0.01, -5, 0,    0.01),
                upper = c(2.5,   5, 0.75, 2.49),
                control = list(kkt=FALSE, maxit=1000),
                data = data,
