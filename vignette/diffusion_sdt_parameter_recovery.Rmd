@@ -109,10 +109,10 @@ diffusion_obj <- function(theta, data, fixed=NULL, Nsim=5e4, seed=42){
   theta <- c(theta, fixed)
   boundaries <- c(0,1) # Boundaries to loop over
   set_diffusion_SDT_seed(seed)
-  sim_data <- diffusion_SDT(N=Nsim, a = theta["a"], z = theta['z'],
-                            v = theta["v"], sv = theta["sv"],
-                            t0 = theta["t0"], st0 = theta["st0"],
-                            crit = theta[c("crit_old","crit_new")],
+  sim_data <- diffusion_SDT(N=Nsim, a = theta[1], v = theta[2],
+                            t0 = theta[3], z = theta[4], sz=theta[5],
+                            sv = theta[6], st0 = theta[7],
+                            crit = theta[8:9]
                             )
 
   p <- numeric(nrow(data))
@@ -535,8 +535,9 @@ filter(collapsed_GOF, value <= chi_cutoff) %>%
   ggtitle("G2 Distribution")
 ```
 
-```{r random_theta_recovery, eval=FALSE, cache =TRUE, dependson=c("diffusion_functions","sample_parameters")}
+```{r random_theta_recovery, cache=TRUE, dependson=c("diffusion_functions","sample_parameters")}
 rec_fits_optimx <- foreach(s = samples,
+                           .error = "pass",
                            .noexport = c("diffusion_SDT", "set_diffusion_SDT_seed"),
                            .packages = c("optimx", "dplyr" , "tidyr")) %dopar% {
 
@@ -548,11 +549,11 @@ rec_fits_optimx <- foreach(s = samples,
       starting_theta <- unlist(sample_parameters(1))[-1] #[-1] to drop id column
       fit <- optimx(starting_theta,
                     fn = diffusion_obj,
-                    method = c("L-BFGS-B"),
+                    method = c("nmkb"),
                     itnmax = 1000,
                     lower = c(0, -5, 0,    0,    0,    0, 0,    -3, -3),
                     upper = c(3,  5, 0.75, 2.99, 0.75, 6, 0.75,  3,  3),
-                    control = list(kkt=FALSE, maxit=1000, starttests=FALSE),
+                    control = list(kkt=FALSE, maxit=1000),
                     data = s$data
                     )
 
@@ -574,9 +575,15 @@ rec_fits_optimx <- foreach(s = samples,
 ```
 
 ```{r tidy_recovered_params}
-recovered_fits <- lapply(lapply(r_fits, `[[`, 'fit'),
+names(rec_fits_optimx) <- 1:length(rec_fits_optimx)
+# Remove any datasets that errored out
+rec_fits_optimx <- Filter(function(x) { class(x)[1]=='list' },
+                          rec_fits_optimx)
+
+recovered_fits <- lapply(lapply(rec_fits_optimx, `[[`, 'fit'),
                          tibble::rownames_to_column, var="method") %>%
   bind_rows()
+
 recovered_GOF <- select(recovered_fits, fevals, gevals, niter, convcode, value)
 recovered_parameters <- select(recovered_fits, !!!names(parameters)[-1])
 ```
