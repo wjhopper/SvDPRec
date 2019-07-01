@@ -313,66 +313,7 @@ legend(x=xaxis[length(xaxis)]-20, y = max(densities$density),
        lwd=2, bty = 'n')
 ```
 
-```{r random_theta_recovery, cache=TRUE, dependson=c("diffusion_functions","sample_parameters")}
-rec_fits_optimx <- foreach(s = samples,
-                           .noexport = c("diffusion_SDT", "set_diffusion_SDT_seed"),
-                           .packages = c("optimx", "dplyr" , "tidyr")) %dopar% {
-
-    best_value <- Inf
-    best_start <- NULL
-    n <- 1
-    while (n <= 2) {
-
-      starting_theta <- unlist(sample_parameters(1))[-1] #[-1] to drop id column
-      fit <- optimx(starting_theta,
-                    fn = diffusion_obj,
-                    method = c("L-BFGS-B"),
-                    itnmax = 1000,
-                    lower = c(0, -5, 0,    0,    0,    0, 0,    -3, -3),
-                    upper = c(3,  5, 0.75, 2.99, 0.75, 6, 0.75,  3,  3),
-                    control = list(kkt=FALSE, maxit=1000, starttests=FALSE),
-                    data = s$data
-                    )
-
-      if (fit$value < best_value) {
-        best_value <- fit$value
-        best_fit <- fit
-        best_start <- starting_theta
-      }
-      
-      n <- n + 1
-    }
-
-    if (best_value == Inf) {
-      best_fit <- fit
-    }
-    
-    list(starting_theta=best_start, fit=best_fit)
-  }
-```
-
-```{r tidy_recovered_params}
-recovered_fits <- lapply(lapply(r_fits, `[[`, 'fit'),
-                         tibble::rownames_to_column, var="method") %>%
-  bind_rows()
-recovered_GOF <- select(recovered_fits, fevals, gevals, niter, convcode, value)
-recovered_parameters <- select(recovered_fits, !!!names(parameters)[-1])
-```
-
-```{r random_recovery_plot}
-all_params <- bind_rows(real = parameters,
-                        est = tibble::rowid_to_column(recovered_parameters,
-                                                      var = "id"),
-                        .id="type")
-x <- all_params %>%
-  gather(key="parameter",value = "value", -id, -type) %>%
-  spread(key="type",value="value")
-
-ggplot(x, aes(x=real,y=est)) +
-  geom_point() +
-  facet_wrap(~parameter, nrow=3, scales = "free")
-```
-
+## Vanilla diffusion model fits to collapsed data
 ```{r collapsed, cache=TRUE, dependson=c("diffusion_functions","sample_parameters")}
 rdiffusion_obj <- function(theta, data, fixed=NULL, Nsim=5e4) {
   
@@ -535,14 +476,8 @@ collapsed_fits_optimx <- foreach(s = samples,
   }
 ```
 
-
-```{r stopCluster, eval=FALSE}
-parallel::stopCluster(cl)
-```
-
-
-```{r}
-diffusion_SDT_recovered <- lapply(
+```{r collapsed_recovery_plots}
+dif, fig.width=9fusion_SDT_recovered <- lapply(
   collapsed_fits_optimx,
   function(x) {
     G2 <- sapply(x$diffusion_SDT_fits, `[[`, "value")
@@ -593,4 +528,68 @@ filter(collapsed_GOF, value <= chi_cutoff) %>%
              mapping = aes(label = paste(n, "Removed")),
              x=chi_cutoff -5, y= .25) +
   ggtitle("G2 Distribution")
+```
+
+```{r random_theta_recovery, cache=TRUE, dependson=c("diffusion_functions","sample_parameters")}
+rec_fits_optimx <- foreach(s = samples,
+                           .noexport = c("diffusion_SDT", "set_diffusion_SDT_seed"),
+                           .packages = c("optimx", "dplyr" , "tidyr")) %dopar% {
+
+    best_value <- Inf
+    best_start <- NULL
+    n <- 1
+    while (n <= 2) {
+
+      starting_theta <- unlist(sample_parameters(1))[-1] #[-1] to drop id column
+      fit <- optimx(starting_theta,
+                    fn = diffusion_obj,
+                    method = c("L-BFGS-B"),
+                    itnmax = 1000,
+                    lower = c(0, -5, 0,    0,    0,    0, 0,    -3, -3),
+                    upper = c(3,  5, 0.75, 2.99, 0.75, 6, 0.75,  3,  3),
+                    control = list(kkt=FALSE, maxit=1000, starttests=FALSE),
+                    data = s$data
+                    )
+
+      if (fit$value < best_value) {
+        best_value <- fit$value
+        best_fit <- fit
+        best_start <- starting_theta
+      }
+      
+      n <- n + 1
+    }
+
+    if (best_value == Inf) {
+      best_fit <- fit
+    }
+    
+    list(starting_theta=best_start, fit=best_fit)
+  }
+```
+
+```{r tidy_recovered_params}
+recovered_fits <- lapply(lapply(r_fits, `[[`, 'fit'),
+                         tibble::rownames_to_column, var="method") %>%
+  bind_rows()
+recovered_GOF <- select(recovered_fits, fevals, gevals, niter, convcode, value)
+recovered_parameters <- select(recovered_fits, !!!names(parameters)[-1])
+```
+
+```{r random_recovery_plot}
+all_params <- bind_rows(real = parameters,
+                        est = tibble::rowid_to_column(recovered_parameters,
+                                                      var = "id"),
+                        .id="type")
+x <- all_params %>%
+  gather(key="parameter",value = "value", -id, -type) %>%
+  spread(key="type",value="value")
+
+ggplot(x, aes(x=real,y=est)) +
+  geom_point() +
+  facet_wrap(~parameter, nrow=3, scales = "free")
+```
+
+```{r stopCluster}
+parallel::stopCluster(cl)
 ```
