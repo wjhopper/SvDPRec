@@ -273,7 +273,7 @@ null_bf_parameters <- select(null_fits, !!!names(parameters)[-1])
 
 ```{r null_g2_recovery_plot}
 nCells <- sapply(samples, function(x) nrow(x$data))
-weights <- as.vector(table(nCells))/length(null_fits)
+weights <- as.vector(table(nCells))/length(null_fit_optimx)
 
 densities <- hist(null_GOF$value, freq = FALSE,
                   breaks=seq(0,max(null_GOF$value)+1, 1),
