@@ -476,15 +476,20 @@ collapsed_fits_optimx <- foreach(s = samples,
   }
 ```
 
-```{r collapsed_recovery_plots}
-dif, fig.width=9fusion_SDT_recovered <- lapply(
+```{r collapsed_recovery_plots, fig.width=9}
+names(collapsed_fits_optimx) <- 1:length(collapsed_fits_optimx)
+
+collapsed_fits_optimx <- Filter(function(x) { class(x)[1]=='list' },
+                                collapsed_fits_optimx)
+
+diffusion_SDT_recovered <- lapply(
   collapsed_fits_optimx,
   function(x) {
     G2 <- sapply(x$diffusion_SDT_fits, `[[`, "value")
     minG2 <- which(G2==min(G2))[1]
     x$diffusion_SDT_fits[[minG2]]
 })
-names(diffusion_SDT_recovered) <- 1:length(diffusion_SDT_recovered)
+
 diffusion_SDT_recovered <- bind_rows(diffusion_SDT_recovered, .id="id")
 
 rdiffusion_recovered <- lapply(
@@ -494,7 +499,7 @@ rdiffusion_recovered <- lapply(
     minG2 <- which(G2==min(G2))[1]
     x$rdiffusion_fits[[minG2]]
 })
-names(rdiffusion_recovered) <- 1:length(rdiffusion_recovered)
+
 rdiffusion_recovered <- bind_rows(rdiffusion_recovered, .id="id")
 
 collapsed_recovered_fits <- bind_rows("rdiffusion" = rdiffusion_recovered,
@@ -526,11 +531,11 @@ filter(collapsed_GOF, value <= chi_cutoff) %>%
   stat_function(fun=dchisq, color="red", args=list(df=11)) +
   geom_label(data = removed,
              mapping = aes(label = paste(n, "Removed")),
-             x=chi_cutoff -5, y= .25) +
+             x=chi_cutoff -5, y= .1) +
   ggtitle("G2 Distribution")
 ```
 
-```{r random_theta_recovery, cache=TRUE, dependson=c("diffusion_functions","sample_parameters")}
+```{r random_theta_recovery, eval=FALSE, cache =TRUE, dependson=c("diffusion_functions","sample_parameters")}
 rec_fits_optimx <- foreach(s = samples,
                            .noexport = c("diffusion_SDT", "set_diffusion_SDT_seed"),
                            .packages = c("optimx", "dplyr" , "tidyr")) %dopar% {
