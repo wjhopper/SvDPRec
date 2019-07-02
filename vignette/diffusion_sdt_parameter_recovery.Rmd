@@ -428,7 +428,7 @@ diffusion_SDT_collapsed_obj <- function(theta, data, fixed=NULL, Nsim=5e4) {
 }
 
 collapsed_fits_optimx <- foreach(s = samples,
-                                 .errorhandling = 'pass',
+                                 .errorhandling = "pass",
                                  .noexport = c("diffusion_SDT", "set_diffusion_SDT_seed"),
                                  .packages = c("optimx", "dplyr", "tidyr", "rtdists")) %dopar% 
   {
