@@ -242,7 +242,7 @@ kable(t(as.matrix(theta)), digits=3, format="html") %>%
   kable_styling(full_width = FALSE)
 ```
 
-Since the only theoretical difference between the "observed data sets" and the "model predictions" is random chance (i.e., both are only simulations), the observed G² statistic should follow a 𝒳² distribution. In this case, the 𝒳² distribution should have 23 degrees of freedom (because there are 6 data bins as defined by the .1, .3, .5, .7, and .9 quantile boundaries, and this parameter set is all but certain to produce observations in all cells of the old/new speeded vs. old/new delayed contingency table). Thus, if the observed G² statistic does not match this reference distribution, there is an RNG error, or an error somewhere in the steps of computing the GOF.
+Since the only theoretical difference between the "observed data sets" and the "model predictions" is random chance (i.e., both are only simulations), the observed G² statistic should follow a X² distribution. In this case, the X² distribution should have 23 degrees of freedom (because there are 6 data bins as defined by the .1, .3, .5, .7, and .9 quantile boundaries, and this parameter set is all but certain to produce observations in all cells of the old/new speeded vs. old/new delayed contingency table). Thus, if the observed G² statistic does not match this reference distribution, there is an RNG error, or an error somewhere in the steps of computing the GOF.
 
 ```{r null_g2_plot}
 G2 <- G2[!is.nan(G2)]
@@ -285,9 +285,9 @@ null_GOF <- select(null_fits, fevals, gevals, niter, convcode, value)
 null_bf_parameters <- select(null_fits, !!!names(parameters)[-1])
 ```
 
-The histogram below shows the G² statistic for models that are fit using the true data generating parameters as the starting point for parameter optimization. Because there is random noise in the generated data, the best-fitting parameters may not be the data generating parameters. In fact, it is expected that the parameter optimization routine will find parameters that fit *better* than the data generating parameters (i.e., over-fit this specific sample) and the distribution of the G² statistic should be *lower* than the reference 𝒳² distribution.
+The histogram below shows the G² statistic for models that are fit using the true data generating parameters as the starting point for parameter optimization. Because there is random noise in the generated data, the best-fitting parameters may not be the data generating parameters. In fact, it is expected that the parameter optimization routine will find parameters that fit *better* than the data generating parameters (i.e., over-fit this specific sample) and the distribution of the G² statistic should be *lower* than the reference X² distribution.
 
-The reference distribution in this specific case is not a single 𝒳² distribution. Because the simulated data is not gauranteed to contain observations from all possible cells of the 2 x 2 contingency table (old/new speeded and old/new delayed), some simulated datasets will have fewer counts than others. The possible number of cells, using bins at the .1, .3, .5, .7, and .9 quantile boundaries, are 6, 12, 18 and 24. To produce the reference distribution,  𝒳² distributions with 5, 11, 17 and 23 degrees of freedom are weighted according to the proportion of simulated datasets with the corresponding number of cells and summed.
+The reference distribution in this specific case is not a single X² distribution. Because the simulated data is not gauranteed to contain observations from all possible cells of the 2 x 2 contingency table (old/new speeded and old/new delayed), some simulated datasets will have fewer counts than others. The possible number of cells, using bins at the .1, .3, .5, .7, and .9 quantile boundaries, are 6, 12, 18 and 24. To produce the reference distribution, X² distributions with 5, 11, 17 and 23 degrees of freedom are weighted according to the proportion of simulated datasets with the corresponding number of cells and summed.
 
 ```{r null_g2_recovery_plot}
 nCells <- sapply(samples, function(x) nrow(x$data))
