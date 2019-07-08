@@ -198,6 +198,66 @@ dprime_sub_sesssion_plot <- ggplot(dprime_by_sub_session,
 print(dprime_sub_sesssion_plot)
 ```
 
+```{r percent_correct}
+speeded_pc_by_subject_strength <- test %>%
+  group_by(subject, strength) %>%
+  summarise(speeded_pc = mean(speeded_correct)) %>%
+  ungroup()
+
+speeded_pc_by_strength <- speeded_pc_by_subject_strength %>%
+  group_by(strength) %>%
+  summarise(speeded_pc = mean(speeded_pc)) %>%
+  ungroup()
+
+delayed_pc_by_subject_strength_bias <- test %>%
+  mutate(pOld = factor(pOld)) %>%
+  group_by(subject, strength, pOld) %>%
+  summarise(delayed_pc = mean(delayed_correct)) %>%
+  ungroup()
+
+delayed_pc_by_strength_bias <- delayed_pc_by_subject_strength_bias %>%
+  group_by(strength, pOld) %>%
+  summarise(delayed_pc = mean(delayed_pc)) %>%
+  ungroup()
+```
+
+```{r percent_corect_display}
+ggplot(speeded_pc_by_subject_strength,
+       aes(x=strength, y=speeded_pc)) +
+  geom_point(color='darkgray', size=2,
+             position=position_jitter(width = .1)) +
+  geom_point(data=speeded_pc_by_strength, size=4) +
+  scale_x_discrete("Item Type",
+                   limits=c("Lure"="L", "Weak"="W", "Strong"="S"),
+                   labels=c("L"="Lure", "W"="Weak", "S"="Strong")
+                   ) +
+  scale_y_continuous("Percent Correct",
+                     labels = scales::percent_format(accuracy = 1)) +
+  ggtitle("Speeded Recognition Accuracy") +
+  theme_bw(base_size = 16)
+
+ggplot(delayed_pc_by_subject_strength_bias,
+       aes(x=strength, y=delayed_pc, shape=pOld)) +
+  geom_point(color='darkgray',
+             size=2,
+             position=position_jitterdodge(dodge.width = .6, jitter.width = .1)) +
+  geom_point(data=delayed_pc_by_strength_bias,
+             size=4,
+             position=position_dodge(width = .6)) +
+  scale_x_discrete("Item Type",
+                   limits=c("Lure"="L", "Weak"="W", "Strong"="S"),
+                   labels=c("L"="Lure", "W"="Weak", "S"="Strong")
+                   ) +
+  scale_y_continuous("Percent Correct",
+                     labels=scales::percent_format(accuracy = 1),
+                     breaks=c(.2, .4, .6, .8, 1)) +
+  scale_shape_discrete("p(Studied)",
+                       labels = c("0.25"="25%", "0.5"="50%", "0.75"="75%")) +
+  ggtitle("Delayed Recognition Accuracy") +
+  theme_bw(base_size = 16) +
+  theme(legend.position = c(0.88, .15),
+        plot.title = element_text(hjust = .5))
+```
 
 
 ## Empirical R.O.C. Function
