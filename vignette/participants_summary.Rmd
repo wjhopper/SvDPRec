@@ -68,8 +68,18 @@ count(test, pOld, type) %>%
   kableExtra::collapse_rows(1)
 ```
 
+```{r trimming}
+# Discard catch trials from main dataset
+catch_trials <- is.na(test$type)
+catch <- test[catch_trials, ]
+test <- test[!catch_trials, ]
+# Remove very fast responses
+test <- filter(test, speeded_RT > 200)
+rm(catch_trials)
+```
+
 ```{r transitions}
-transitions <- filter(test, !is.na(type)) %>%
+transitions <- test %>%
   count(pOld, speeded_judgment, delayed_judgment) %>%
   group_by(pOld) %>%
   mutate(percent = n/sum(n)) %>%
@@ -89,7 +99,7 @@ kable(transitions, format = "html",
 
 ## Recognition Accuracy
 ```{r accuracy_per_sub_session}
-percent_correct_per_sub_session <- filter(test, !is.na(type)) %>%
+percent_correct_per_sub_session <- test %>%
   group_by(subject, session) %>%
   summarise_at(c("speeded_correct", "delayed_correct"), mean) %>%
   gather(key = "judgment", value = "PC", speeded_correct, delayed_correct) %>%
@@ -129,13 +139,13 @@ print(PC_sub_session_plot + subject_number_annotations)
 ```
 
 ```{r dprime_per_sub_session}
-speeded_counts_by_sub_session <- filter(test, !is.na(type)) %>%
+speeded_counts_by_sub_session <- test %>%
   count(subject, session, strength, speeded_correct) %>%
   complete(subject, session, strength, speeded_correct,
            fill = list(n=0)) %>%
   rename(correct = speeded_correct)
 
-delayed_counts_by_sub_session_bias <- filter(test, !is.na(type)) %>%
+delayed_counts_by_sub_session_bias <- test %>%
   count(subject, session, strength, pOld, delayed_correct) %>%
   complete(subject, session, strength, pOld, delayed_correct,
            fill = list(n=0)) %>%
@@ -234,7 +244,7 @@ ggplot(ROC_by_sub, aes(x=FAR, y=HR, color = factor(pOld), group=subject)) +
 
 ## Response Time
 ```{r response_times}
-RT_by_sub_session_type <- filter(test, !is.na(type)) %>%
+RT_by_sub_session_type <- test %>%
   select(subject, session, strength, speeded_judgment, speeded_RT) %>%
   group_by(subject, session, strength, speeded_judgment) %>%
   summarise(speeded_RT= list(as.data.frame(t(
@@ -243,7 +253,7 @@ RT_by_sub_session_type <- filter(test, !is.na(type)) %>%
   ungroup() %>%
   unnest(speeded_RT)
 
-RT_by_sub_type_acc <- filter(test, !is.na(type)) %>%
+RT_by_sub_type_acc <- test %>%
   select(subject, strength, speeded_correct, speeded_RT) %>%
   group_by(subject, strength, speeded_correct) %>%
   summarise(speeded_RT= list(as.data.frame(t(
