@@ -38,7 +38,7 @@ test <- mutate(test,
                                  (type == "L" & speeded_judgment == "n"),
                delayed_correct = (type == "T" & delayed_judgment == "o") |
                                  (type == "L" & delayed_judgment == "n")) %>%
-  select(subject, session, trial:strength, word, 
+  select(subject, session, list:strength, word, 
          speeded_judgment, speeded_RT, speeded_correct,
          delayed_judgment, delayed_RT, delayed_correct)
 ```
@@ -66,6 +66,7 @@ count(test, pOld, type) %>%
   kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
   kableExtra::column_spec(1, bold = T, color = "black") %>%
   kableExtra::collapse_rows(1)
+
 ```
 
 ```{r trimming}
@@ -95,6 +96,25 @@ kable(transitions, format = "html",
   kableExtra::add_header_above(c(" " = 2, "Delayed" = 2)) %>%
   kableExtra::column_spec(1, bold = T, color = "black") %>%
   kableExtra::collapse_rows(1)
+```
+<!-- empty div used to bump plot down, so it doesn't "slide" in next to floated tables -->
+<div style="height:260px"></div>
+
+```{r lure_trial_count_distribution}
+lures_counts <- count(test, subject, session, list, type) %>%
+  filter(type=="L")
+lure_count_range = range(lures_counts$n)
+d <- hist(lures_counts$n, freq = FALSE,
+     breaks = lure_count_range[1]:lure_count_range[2],
+     main="Distribution of Lure Trial Counts",
+     xlab = "Number of Lure Trials in List")
+points(x = lure_count_range[1]:lure_count_range[2],
+       y = dnbinom(lure_count_range[1]:lure_count_range[2],
+                   size = 60, p=.5
+                   ),
+       col="red"
+       )
+legend(x=80, y=max(d$density), legend = "NB(60, .5)", pch = 1, col = "red")
 ```
 
 ## Recognition Accuracy
