@@ -9,6 +9,12 @@ output:
 editor_options: 
   chunk_output_type: console
 ---
+```{css}
+.main-container {
+    max-width: 1100px;
+  }
+```
+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
@@ -56,10 +62,25 @@ obs_ROC_data <- mutate(delayed_counts_by_sub_bias,
                        HR_W = H_W/W_N,
                        HR_S = H_S/S_N,
                        pOld = sprintf("%2.0f%%", pOld*100)) %>%
-  select(subject, pOld, FAR, HR_W, HR_S)
+  select(subject, pOld, FAR, HR_W, HR_S) %>%
+  gather(key="strength", value="HR", HR_W, HR_S) %>%
+  mutate(strength = sub("HR_", "", strength)) %>%
+  select(subject, pOld, strength, FAR, HR)
 
-avg_obs_ROC_data <- group_by(obs_ROC_data, pOld) %>%
-  summarise_at(.vars = c("FAR", "HR_W", "HR_S"), .funs = "mean")
+avg_obs_ROC_data <- group_by(obs_ROC_data, pOld, strength) %>%
+  summarise_at(.vars = c("FAR", "HR"), .funs = "mean") %>%
+  ungroup()
+```
+
+```{r null_LL}
+null_LL <- mutate(delayed_counts_by_sub_bias,
+                  FA_LL = dbinom(FA, L_N, FA / L_N, log = TRUE),
+                  HW_LL = dbinom(H_W, W_N, H_W / W_N, log = TRUE),
+                  HS_LL = dbinom(H_S, S_N, H_S / S_N, log = TRUE),
+                  LL = FA_LL + HW_LL + HS_LL) %>% 
+  select(subject, pOld, LL) %>%
+  group_by(subject) %>%
+  summarise(null_LL = sum(LL))
 ```
 
 ## Hierarchical Bayesian Estimation
@@ -71,18 +92,22 @@ avg_obs_ROC_data <- group_by(obs_ROC_data, pOld) %>%
 # Create an array suitable for passing into stan, so it can be turned into an array of matrices
 # The final produce should be 14 x 3 x 3, with subject along dim 1, bias level (conservative --> liberal) along dim 2,
 # and strength (lure, weak, strong) along dim 3.
-delayed_counts_by_sub_bias <- arrange(delayed_counts_by_sub_bias, subject, desc(pOld)) %>%
+corrects_matrix <- arrange(delayed_counts_by_sub_bias, subject, desc(pOld)) %>%
   mutate(CR = L_N - FA,
-         H_S = replace(H_S, H_S == S_N, H_S[H_S == S_N]-1))
-
-corrects_matrix = t(as.matrix(delayed_counts_by_sub_bias[c('CR','H_W','H_S')]))
+         H_S = replace(H_S, H_S == S_N, H_S[H_S == S_N]-1)) %>%
+  as.matrix(x=.[,c('CR','H_W','H_S')], rownames.force = FALSE) %>%
+  t()
 dim(corrects_matrix) <- c(3, 3, 14)
 dimnames(corrects_matrix) <- list("Strength" = c("Lure","Weak","Strong"),
-                             "Bias" = c("Lib.","Neutral","Cons."),
-                             "Subject" = 101:114)
+                                  "Bias" = c("Lib.", "Neutral", "Cons."),
+                                  "Subject" = 101:114)
 corrects_matrix <- aperm(corrects_matrix, c(2,1,3))
 
-trial_matrix = t(as.matrix(delayed_counts_by_sub_bias[c('L_N','W_N','S_N')]))
+trial_matrix <- arrange(delayed_counts_by_sub_bias, subject, desc(pOld)) %>%
+  mutate(CR = L_N - FA,
+         H_S = replace(H_S, H_S == S_N, H_S[H_S == S_N]-1)) %>%
+  as.matrix(x=.[,c('L_N','W_N','S_N')], rownames.force = FALSE) %>%
+  t()
 dim(trial_matrix) <- c(3, 3, 14)
 dimnames(trial_matrix) <- list("Strength" = c("Lure","Weak","Strong"),
                                "Bias" = c("Lib.","Neutral","Cons."),
@@ -92,102 +117,95 @@ trial_matrix <- aperm(trial_matrix, c(2,1,3))
 standata <- list(corrects = corrects_matrix, trials = trial_matrix,
                  Nsubs = length(unique(delayed_counts_by_sub_bias$subject)))
 
-fit <- stan(file = file.path(root_dir, "R","2HT.stan"),
-            data = standata,
-            iter = 3000,
-            chains = 4,
-            seed = 1235,
-            init_r = 1,
-            control = list(adapt_delta=.99, max_treedepth=15)
-            )
-fit <- recover_types(fit)
+twoHT_stan_fit <- stan(file = file.path(root_dir, "R","2HT.stan"),
+                       data = standata,
+                       iter = 3000,
+                       chains = 4,
+                       seed = 1235,
+                       init_r = 1,
+                       control = list(adapt_delta = .99, max_treedepth = 15)
+                       )
+twoHT_stan_fit <- recover_types(twoHT_stan_fit)
+rm(corrects_matrix, trial_matrix, standata)
 ```
 
-```{r parameter_summaries}
-subject_params <- spread_draws(fit, `GO_.*`[subject], `D.*`[subject], regex=TRUE) %>%
+```{r stan_parameter_summaries}
+twoHT_stan_subject_params <- spread_draws(twoHT_stan_fit, `GO_.*`[subject], `D.*`[subject], regex=TRUE) %>%
   ungroup() %>%
   mutate(subject = as.character(subject + 100)) %>%
   group_by(subject)
 
-subject_param_summaries <- mean_hdi(subject_params)
+twoHT_stan_subject_param_summaries <- mean_hdi(twoHT_stan_subject_params)
   
-pop_params <- spread_draws(fit, `beta_.*`[parameter_index], regex=TRUE)
+twoHT_stan_pop_params <- spread_draws(twoHT_stan_fit, `beta_.*`[parameter_index], regex=TRUE)
 
 param_index_key <- c("DN", "DO_W", "DO_S", "GO_Lib", "GO_Neut", "GO_Cons")
-pop_param_summaries <- mean_hdi(pop_params) %>%
+twoHT_stan_pop_param_summaries <- mean_hdi(twoHT_stan_pop_params) %>%
   select(-.point, -.interval, -.width) %>%
   mutate(parameter_index = param_index_key[parameter_index]) %>%
   gather("param", "value", -parameter_index) %>%
   mutate(param = sub("beta_", "", param)) %>%
   unite(col=param, parameter_index, param) %>%
   spread(param, value)
+
+rm(param_index_key)
 ```
 
-```{r point_predictions}
-X <- select(subject_param_summaries, subject, DN, DO_W, DO_S) %>%
+```{r stan_ROC_point_predictions}
+detect_params <- select(twoHT_stan_subject_param_summaries, subject, DN, DO_W, DO_S) %>%
   gather("strength","detect_prob", -subject) %>%
   mutate(strength = recode(strength, DN = "L", DO_W = "W", DO_S = "S"))
 
-Y <- select(subject_param_summaries, subject, GO_Lib, GO_Neut, GO_Cons) %>%
+bias_params <- select(twoHT_stan_subject_param_summaries, subject, GO_Lib, GO_Neut, GO_Cons) %>%
   gather("pOld","guess_old_prob", -subject) %>%
   mutate(pOld = recode(pOld, GO_Lib = "75%", GO_Neut = "50%", GO_Cons = "25%"))
 
-pred_accuracy <- full_join(X, Y, by="subject") %>%
+twoHT_stan_pred_accuracy <- full_join(detect_params, bias_params, by="subject") %>%
   select(subject, strength, pOld, detect_prob, guess_old_prob) %>%
   arrange(subject,strength, pOld) %>%
   mutate(guess_correct_prob = ifelse(strength=="L", 1-guess_old_prob, guess_old_prob),
          pCorrect = detect_prob + (1-detect_prob)*(guess_correct_prob)) %>%
   select(-guess_old_prob)
 
-```
-
-```{r ROC_data}
-pred_ROC_data <- select(pred_accuracy, -detect_prob, -guess_correct_prob) %>%
+twoHT_stan_ROC_data <- select(twoHT_stan_pred_accuracy, -detect_prob, -guess_correct_prob) %>%
   spread(strength, pCorrect) %>%
   mutate(FAR = 1-L) %>%
-  select(subject, pOld, FAR, HR_W = W, HR_S = S)
-  
-obs_ROC_data <- mutate(delayed_counts_by_sub_bias,
-                       FAR = FA/L_N,
-                       HR_W = H_W/W_N,
-                       HR_S = H_S/S_N,
-                       pOld = sprintf("%2.0f%%", pOld*100)) %>%
-  select(subject, pOld, FAR, HR_W, HR_S)
+  select(subject, pOld, FAR, HR_W = W, HR_S = S) %>%
+  gather(key="strength", value="HR", HR_W, HR_S) %>%
+  mutate(strength = sub("HR_", "", strength)) %>%
+  select(subject, pOld, strength, FAR, HR) %>%
+  bind_rows(pred = ., obs = obs_ROC_data, .id = "type") %>%
+  arrange(subject, pOld, strength, type)
 
-ROC_data <- bind_rows(pred = pred_ROC_data, obs = obs_ROC_data, .id = "type") %>%
-  arrange(subject, pOld, type) %>%
-  select(subject, pOld, type, FAR, HR_W, HR_S)
-
-ROC_data <- bind_rows(select(ROC_data, -HR_S) %>%
-                        mutate(strength = "W") %>%
-                        rename(HR = HR_W),
-                      select(ROC_data, -HR_W) %>%
-                        mutate(strength = "S") %>%
-                        rename(HR = HR_S)
-                      ) %>%
-  select(subject, strength, pOld, type, FAR, HR)
+rm(detect_params, bias_params)
 ```
 
+
 ```{r ROC_plot, results="asis"}
-for (s in unique(ROC_data$subject)) {
+for (s in unique(twoHT_stan_ROC_data$subject)) {
   
   cat(sprintf("<h3>Subject %s</h3>", s))
   
-  filter(subject_param_summaries, subject == s) %>%
+  filter(twoHT_stan_subject_param_summaries, subject == s) %>%
     select(-.width, -.interval, -.point) %>%
     gather("param", "value", -subject) %>%
     separate(param, into = c("param","stat"), sep = "\\.",
              fill="right") %>%
     spread(stat, value) %>%
     select(param, mean = `<NA>`, lower, upper) %>%
+    mutate(lower = round(lower, 3),
+           upper = round(upper, 3),
+           HDI = paste("[", lower, ", ", upper, "]", sep="")
+           ) %>%
+    select(param, mean, HDI) %>%
     knitr::kable(digits=3,
                  type="html",
-                 col.names = c("Parameter", "Posterior Mean", "HDI Lower", "HDI Upper")) %>%
-    kable_styling(full_width = FALSE) %>%
+                 col.names = c("Parameter", "Posterior Mean", "HDI")) %>%
+    kable_styling(full_width = FALSE, position = "float_left") %>%
     column_spec(1, bold=TRUE) %>%
     print()
   
-    ROC <- ggplot(filter(ROC_data, subject == s),
+    ROC <- ggplot(filter(twoHT_stan_ROC_data, subject == s),
                   aes(x=FAR, y=HR, linetype=type, shape=pOld)) +
       geom_point(size=2) +
       geom_line(aes(group=type), size=.8) +
@@ -197,14 +215,16 @@ for (s in unique(ROC_data$subject)) {
       coord_equal()
     print(ROC)
 }
+
+rm(ROC, s)
 ```
 
 ## MLE Version
 
 ### MPT 
 
-```{r 2HT_model_and_data, cache=TRUE}
-twoHT_model <- "
+```{r 2HT_model_and_data, cache=TRUE, dependson=c("cell_counts")}
+twoHT_mpt_model <- "
 # Tree for strong items in pOld=25% condition. First 'old', then 'new'
 dS + (1-dS) * gC
 (1-dS)*(1-gC)
@@ -242,7 +262,7 @@ dW + (1-dW) * gL
 dN + (1-dN) * (1 - gL)
 "
 
-twoHT_data_layout <- transmute(delayed_counts_by_sub_bias,
+twoHT_mpt_data_layout <- transmute(delayed_counts_by_sub_bias,
   subject,
   pOld,
   strong_old = H_S,
@@ -269,28 +289,34 @@ twoHT_data_layout <- transmute(delayed_counts_by_sub_bias,
   data.matrix()
 ```
 
-```{r 2HT_fit,cache=TRUE, dependson="2HT_model_and_data"}
-fit <- fit.mpt(twoHT_data_layout, textConnection(twoHT_model),show.messages = FALSE)
-params <- fit$parameters[[1]][,1,]
-colnames(params) <- paste("Subject", 101:114)
-params <- t(params)
+```{r 2HT_fit, cache=TRUE, dependson="2HT_model_and_data"}
+twoHT_mpt_fit <- fit.mpt(data = twoHT_mpt_data_layout,
+                         model.filename = textConnection(twoHT_mpt_model),
+                         show.messages = FALSE)
+rm(twoHT_mpt_data_layout, twoHT_mpt_model)
 ```
 
 ```{r 2HT_frequentist_reporting}
-kable(params, digits=3) %>%
-  kableExtra::kable_styling(full_width = FALSE) %>%
+twoHT_mpt_params <- cbind(twoHT_mpt_fit$parameters$individual[,1,],
+                          twoHT_mpt_fit$parameters$mean[,1, drop=FALSE]
+                          )
+colnames(twoHT_mpt_params) <- c(paste("Subject", 101:114), "Mean")
+twoHT_mpt_params <- t(twoHT_mpt_params)
+
+kable(twoHT_mpt_params, digits=3) %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
   column_spec(1, bold = TRUE)
 
-GOF <- bind_rows(fit$goodness.of.fit$individual,
-                 fit$goodness.of.fit$sum)
-rownames(GOF) <- c(paste("Subject", 101:114), "Total")
+twoHT_mpt_GOF <- bind_rows(twoHT_mpt_fit$goodness.of.fit$individual,
+                           twoHT_mpt_fit$goodness.of.fit$sum)
+rownames(twoHT_mpt_GOF) <- c(paste("Subject", 101:114), "Total")
 
-kable(GOF, digits=3) %>%
-  kableExtra::kable_styling(full_width = FALSE) %>%
+kable(twoHT_mpt_GOF, digits=3) %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "left") %>%
   column_spec(1, bold = TRUE)
 ```
 
-## Standard
+### Standard
 ```{r std_2HT_LL}
 twoHT <- function(theta) {
   
@@ -325,8 +351,8 @@ twoHT_G2 <- function(theta, counts) {
 ```
 
 ```{r std_2HT_fit, cache=TRUE, dependson=c("std_2HT_LL","cell_counts")}
-twoHT_stdfit_optimx <- foreach(sub = split(delayed_counts_by_sub_bias,
-                                        delayed_counts_by_sub_bias$subject)
+twoHT_std_fit_optimx <- foreach(sub = split(delayed_counts_by_sub_bias,
+                                           delayed_counts_by_sub_bias$subject)
                             ) %do% {
 
     fit <- optimx(par = c("DN"=.5, "DO_W"=.5, "DO_S"=.75,
@@ -342,27 +368,33 @@ twoHT_stdfit_optimx <- foreach(sub = split(delayed_counts_by_sub_bias,
                   )
     fit$subject <- sub$subject[1]
     fit
-                            }
+  }
+rm(fit, sub)
 ```
 
 ```{r std_twoHT_GOF}
-twoHT_std_fits <- bind_rows(twoHT_stdfit_optimx)
+twoHT_std_fits <- bind_rows(twoHT_std_fit_optimx)
+
 twoHT_std_params <- select(twoHT_std_fits, subject, !!!c("DN", "DO_W", "DO_S", "GO_Cons", "GO_Neut", "GO_Lib"))
-GOF <- select(twoHT_std_fits, subject, LL = value, fevals, gevals, niter, convcode) %>%
-  mutate(LL = -LL)
+twoHT_std_avg_params <- summarise_at(twoHT_std_params,
+                                     .vars = c("DN", "DO_W", "DO_S", "GO_Cons", "GO_Neut", "GO_Lib"),
+                                     .funs = "mean")
 
-null_LL <- mutate(delayed_counts_by_sub_bias,
-                  FA_LL = dbinom(FA, L_N, FA / L_N, log = TRUE),
-                  HW_LL = dbinom(H_W, W_N, H_W / W_N, log = TRUE),
-                  HS_LL = dbinom(H_S, S_N, H_S / S_N, log = TRUE),
-                  LL = FA_LL + HW_LL + HS_LL) %>% 
-  select(subject, pOld, LL) %>%
-  group_by(subject) %>%
-  summarise(null_LL = sum(LL))
-
-GOF <- left_join(GOF, null_LL, by="subject") %>%
+twoHT_std_GOF <- select(twoHT_std_fits, subject, LL = value, fevals, gevals, niter, convcode) %>%
+  mutate(LL = -LL) %>%
+  left_join(null_LL, by="subject") %>%
   mutate(calc_G2 = -2*(LL - null_LL)) %>%
-  select(subject, LL, null_LL, calc_G2, fevals:convcode)
+  mutate(df = 3,
+         p.value = pchisq(calc_G2, df=df, lower.tail = FALSE)
+         ) %>%
+  select(subject, LL, null_LL, calc_G2, df, p.value, fevals:convcode)
+
+twoHT_std_sum_GOF <- select(.data = twoHT_std_GOF,
+                            subject, LL, null_LL, calc_G2, df) %>%
+  summarise_at(.vars = c("LL", "null_LL", "calc_G2", "df"),
+               .funs = "sum"
+               ) %>%
+  mutate(p.value = pchisq(calc_G2, df=df, lower.tail = FALSE))
 
 rm(twoHT_std_fits)
 ```
@@ -395,18 +427,14 @@ twoHT_std_avg_ROC_preds <- select(twoHT_std_params, -subject) %>%
     
     )) %>%
   unnest()
-# twoHT_std_ROC_data <- bind_rows("obs" = obs_ROC_data, "pred" = twoHT_std_ROC_predictions,
-#                                 .id = "type")
 ```
 
-```{r std_twoHT_plots}
-avg_obs_ROC_data_long <- gather(avg_obs_ROC_data, "strength", "HR", HR_W, HR_S) %>%
-  mutate(strength = sub("HR_", "", strength))
-ggplot(twoHT_std_avg_ROC_preds,
+```{r std_twoHT_plots, fig.width=9}
+ggplot(filter(twoHT_std_avg_ROC_preds, HR <= 1),
        aes(x=FAR, y=HR, linetype=strength)) +
   geom_line(size=1.75) +
   geom_point(aes(color=factor(pOld)),
-             data = avg_obs_ROC_data_long,
+             data = avg_obs_ROC_data,
              size=4) +
   scale_x_continuous("False Alarm Rate", limits = c(0,1),
                      labels = c(0,0.25, 0.5, 0.75, 1)) +
@@ -426,3 +454,22 @@ ggplot(twoHT_std_avg_ROC_preds,
 
 ```
 
+```{r std_twoHT_parameters}
+bind_rows(twoHT_std_params,
+          mutate(twoHT_std_avg_params, subject = "Mean")
+          ) %>%
+  tibble::column_to_rownames(var="subject") %>%
+  kable(type="HTML", digits=3) %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+  column_spec(1, bold = TRUE)
+
+bind_rows(select(.data = twoHT_std_GOF,
+                 subject, LL, null_LL, calc_G2, df, p.value),
+          mutate(.data = twoHT_std_sum_GOF,
+                 subject = "Sum")
+          ) %>%
+  tibble::column_to_rownames(var="subject") %>%
+  kable(type="HTML", digits=3) %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+  column_spec(1, bold = TRUE)
+```
