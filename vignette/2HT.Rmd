@@ -9,12 +9,11 @@ output:
 editor_options: 
   chunk_output_type: console
 ---
-```{css}
+```{css css}
 .main-container {
     max-width: 1100px;
   }
 ```
-
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, fig.align = "center", cache=TRUE)

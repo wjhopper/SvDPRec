@@ -10,6 +10,12 @@ editor_options:
   chunk_output_type: console
 ---
 
+```{css css, include=FALSE}
+.main-container {
+    max-width: 1100px;
+  }
+```
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
 library(rprojroot)
@@ -29,6 +35,52 @@ root_dir <- rprojroot::is_rstudio_project$find_file()
 ```{r load_data}
 load(file.path(root_dir, "data","SvDPRec.Rdata"))
 test <- select(test, -list)
+```
+
+```{r cell_counts}
+delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
+  select(-starts_with("speeded")) %>%
+  rename(correct = delayed_correct) %>%
+  count(subject, strength, pOld, correct) %>%
+  complete(subject, strength, pOld, correct,
+           fill = list(n=0)) %>%
+  unite(col = "resp_type", strength, correct) %>%
+  spread(resp_type, n) %>%
+  rename(FA = L_FALSE, CR = L_TRUE,
+         M_S = S_FALSE, H_S = S_TRUE,
+         M_W = W_FALSE, H_W = W_TRUE) %>%
+  mutate(L_N = FA + CR,
+         S_N = M_S + H_S,
+         W_N = M_W + H_W) %>%
+  select(subject, pOld, FA, L_N, H_S, S_N, H_W, W_N)
+
+```
+
+```{r empirical_roc_data, dependson="cell_counts"}
+obs_ROC_data <- mutate(delayed_counts_by_sub_bias,
+                       FAR = FA/L_N,
+                       HR_W = H_W/W_N,
+                       HR_S = H_S/S_N,
+                       pOld = sprintf("%2.0f%%", pOld*100)) %>%
+  select(subject, pOld, FAR, HR_W, HR_S) %>%
+  gather(key="strength", value="HR", HR_W, HR_S) %>%
+  mutate(strength = sub("HR_", "", strength)) %>%
+  select(subject, pOld, strength, FAR, HR)
+
+avg_obs_ROC_data <- group_by(obs_ROC_data, pOld, strength) %>%
+  summarise_at(.vars = c("FAR", "HR"), .funs = "mean") %>%
+  ungroup()
+```
+
+```{r null_LL, dependson=c("cell_counts")}
+null_LL <- mutate(delayed_counts_by_sub_bias,
+                  FA_LL = dbinom(FA, L_N, FA / L_N, log = TRUE),
+                  HW_LL = dbinom(H_W, W_N, H_W / W_N, log = TRUE),
+                  HS_LL = dbinom(H_S, S_N, H_S / S_N, log = TRUE),
+                  LL = FA_LL + HW_LL + HS_LL) %>%
+  select(subject, pOld, LL) %>%
+  group_by(subject) %>%
+  summarise(null_LL = sum(LL))
 ```
 
 ## Subject-wise Maximum Likelihood Estimation
@@ -63,7 +115,7 @@ SDT_LL <- function(H_S, H_W, FA, ...) {
   SDT_preds <- SDT(...)
   LL <- c(dbinom(H_S$H_S, size = H_S$S_N, prob = SDT_preds$HitRate_Strong, log=TRUE),
           dbinom(H_W$H_W, size = H_W$W_N, prob = SDT_preds$HitRate_Weak, log=TRUE),
-          dbinom(FA$FA, size = FA$FA_N, prob = SDT_preds$FalseAlarmRate, log=TRUE)
+          dbinom(FA$FA, size = FA$L_N, prob = SDT_preds$FalseAlarmRate, log=TRUE)
           )
   return(-sum(LL))
 }
@@ -88,28 +140,9 @@ fit_SDT <- function(theta, ...) {
 }
 ```
 
-```{r cell_counts}
-delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
-  select(-starts_with("speeded")) %>%
-  rename(correct = delayed_correct) %>%
-  count(subject, strength, pOld, correct) %>%
-  complete(subject, strength, pOld, correct,
-           fill = list(n=0)) %>%
-  unite(col = "resp_type", strength, correct) %>%
-  spread(resp_type, n) %>%
-  rename(FA = L_FALSE, CR = L_TRUE,
-         M_S = S_FALSE, H_S = S_TRUE,
-         M_W = W_FALSE, H_W = W_TRUE) %>%
-  mutate(FA_N = FA + CR,
-         S_N = M_S + H_S,
-         W_N = M_W + H_W) %>%
-  select(subject, pOld, FA, FA_N, H_S, S_N, H_W, W_N)
-
-```
-
-```{r MLE_fit, cache=TRUE}
-UVSD_fits <- foreach(sub = split(delayed_counts_by_sub_bias,
-                                 delayed_counts_by_sub_bias$subject)
+```{r MLE_fit}
+UVSD_fits_optimx <- foreach(sub = split(delayed_counts_by_sub_bias,
+                                        delayed_counts_by_sub_bias$subject)
                      ) %do% {
 
   fit <- optimx(par = c("d.W"=1.5, "d.S"=2.5, "s" = 1.2,
@@ -118,11 +151,11 @@ UVSD_fits <- foreach(sub = split(delayed_counts_by_sub_bias,
                 method = "nlminb",
                 itnmax = 3000,
                 lower = c(0, 0, 0.1, 0.1, -3, -3, -3),
-                upper = c(5, 5, 2, 2, 3, 3, 3),
+                upper = c(4, 4, 2, 2, 3, 3, 3),
                 control = list(kkt=FALSE),
                 H_S = sub[c("H_S","S_N")],
                 H_W = sub[c("H_W", "W_N")],
-                FA = sub[c("FA", "FA_N")]
+                FA = sub[c("FA", "L_N")]
               )
   ## Add subject number as first column of fit table
   fit$subject <- sub$subject[1]
@@ -140,29 +173,139 @@ UVSD_fits <- foreach(sub = split(delayed_counts_by_sub_bias,
   
   }
 
-UVSD_fits <- bind_rows(UVSD_fits)
+UVSD_MLE_fits <- bind_rows(UVSD_fits_optimx)
 ```
 
-```{r formatted_column_names}
+```{r MLE_GOF, dependson="MLE_fit"}
+UVSD_MLE_params <- select(.data = UVSD_MLE_fits,
+                          subject, d.W, d.S, s, c.C = crit1, c.N = crit2, c.L = crit3)
+UVSD_MLE_params_avg <- summarise_at(UVSD_MLE_params,
+                                    .vars = c("d.W", "d.S", "s", "c.C", "c.N", "c.L"),
+                                    .funs = "mean")
+
+UVSD_MLE_GOF <- select(UVSD_MLE_fits, subject, LL, fevals, gevals, niter, convcode) %>%
+  left_join(null_LL, by="subject") %>%
+  mutate(calc_G2 = -2*(LL - null_LL)) %>%
+  mutate(df = 3,
+         p.value = pchisq(calc_G2, df=df, lower.tail = FALSE)
+         ) %>%
+  select(subject, LL, null_LL, calc_G2, df, p.value, fevals:convcode)
+
+UVSD_MLE_GOF_sum <- select(.data = UVSD_MLE_GOF,
+                            subject, LL, null_LL, calc_G2, df) %>%
+  summarise_at(.vars = c("LL", "null_LL", "calc_G2", "df"),
+               .funs = "sum"
+               ) %>%
+  mutate(p.value = pchisq(calc_G2, df=df, lower.tail = FALSE))
+
+rm(UVSD_MLE_fits)
+```
+
+```{r MLE_ROC_predictions}
+FAR_points <- seq(0, 1, .01)
+
+MLE_ROC_preds <- rowwise(UVSD_MLE_params) %>%
+  mutate(SDT = list(
+    data.frame(FAR = rep(FAR_points, 2),
+               HR = pnorm(c((qnorm(FAR_points) + d.W)/s,
+                            (qnorm(FAR_points) + d.S)/s
+                          )),
+               strength = factor(rep(c("W", "S"), each = length(FAR_points)),
+                                 levels=c("W","S"))
+               )
+  )) %>%
+  select(subject, SDT) %>%
+  unnest()
+
+MLE_ROC_preds_avg <-
+  summarise(.data = UVSD_MLE_params_avg,
+            SDT = list(data.frame(
+                FAR = rep(FAR_points, 2),
+                HR = pnorm(c((qnorm(FAR_points) + d.W)/s,
+                             (qnorm(FAR_points) + d.S)/s
+                           )),
+                strength = factor(rep(c("W", "S"), each = length(FAR_points)),
+                                levels=c("W","S")
+                                )
+                ))
+            )%>%
+  unnest()
+```
+
+```{r MLE_ROC_avg_plot, fig.width=9}
+ggplot(MLE_ROC_preds_avg,
+       aes(x=FAR, y=HR, linetype=strength)) +
+  geom_line(size=1.75) +
+  geom_point(aes(color=factor(pOld)),
+             data = avg_obs_ROC_data,
+             size=4) +
+  scale_x_continuous("False Alarm Rate", limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_linetype_discrete("Item",
+                          labels=c("W" = "'Weak' Target",
+                                   "S" = "'Strong' Target")) +
+  scale_color_manual("p(Old)", values = c("#d82d2d", "#d8d834", "#17b50c")) +
+  guides(colour = guide_legend(override.aes = list(size = 4)),
+         shape = guide_legend(override.aes = list(size = 4))) +
+  coord_fixed() +
+  ggtitle("UVSD Model ROC (Average)") +
+  theme_bw(base_size = 16) +
+  theme(plot.title = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.width = unit(10,"mm")
+        )
+```
+
+```{r MLE_parameters, dependson=c("MLE_fit")}
 parameter_colnames <- c("d'<sub>W</sub>", "d'<sub>S</sub>", "\u03c3",
                         "C<sub>c</sub>", "C<sub>n</sub>", "C<sub>l</sub>")
 
-hyperparam_colnames <- rep(c("\u03BC", "\u03c3"), 6)
+bind_rows(UVSD_MLE_params,
+          mutate(UVSD_MLE_params_avg, subject = "Mean")
+          ) %>%
+  kable(digits=3, type="HTML", escape = FALSE,
+        caption = "MLE parameter estimates",
+        col.names = c("Subject", parameter_colnames)
+        ) %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+  column_spec(1, bold = TRUE)
+
+bind_rows(select(.data = UVSD_MLE_GOF,
+                 subject, LL, null_LL, calc_G2, df, p.value),
+          mutate(.data = UVSD_MLE_GOF_sum,
+                 subject = "Sum")
+          ) %>%
+  kable(type="HTML", digits=3,
+        caption = "MLE Goodness of Fit") %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+  column_spec(1, bold = TRUE)
 ```
 
-
-```{r MLE_fit_display, dependson=c("MLE_fit")}
-MLE_param_means <- colMeans(select(UVSD_fits, d.W:crit3))
-
-kable(UVSD_fits, digits=3, escape = FALSE,
-      caption = "MLE parameter estimates",
-      col.names = c("Subject", parameter_colnames, names(UVSD_fits)[8:12])) %>%
-  kableExtra::kable_styling(full_width = FALSE, position="left")
-
-kable(matrix(MLE_param_means, ncol=6), digits=3, escape = FALSE,
-      caption = "Average parameters",
-      col.names = parameter_colnames) %>%
-  kableExtra::kable_styling(full_width = FALSE, position="left")
+```{r MLE_ROC_sub_plot, fig.width=9, fig.height=9}
+ggplot(MLE_ROC_preds,
+       aes(x=FAR, y=HR, linetype=strength)) +
+  geom_line(size=1.75) +
+  geom_point(aes(color=factor(pOld)),
+             data = obs_ROC_data,
+             size=2) +
+  facet_wrap(~subject, labeller = label_both) +
+  scale_x_continuous("False Alarm Rate", limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_linetype_discrete("Item",
+                          labels=c("W" = "'Weak' Target",
+                                   "S" = "'Strong' Target")) +
+  scale_color_manual("p(Old)", values = c("#d82d2d", "#d8d834", "#17b50c")) +
+  guides(colour = guide_legend(override.aes = list(size = 4)),
+         shape = guide_legend(override.aes = list(size = 4))) +
+  ggtitle("UVSD Model ROC") +
+  theme_bw(base_size = 16) +
+  theme(plot.title = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.width = unit(10,"mm"),
+        legend.position = c(.7, .10),
+        legend.box = "horizontal")
 ```
 
 ## Hierarchical Bayesian Estimation
@@ -174,8 +317,7 @@ kable(matrix(MLE_param_means, ncol=6), digits=3, escape = FALSE,
 # Create an array suitable for passing into stan, so it can be turned into an array of matrices
 # The final produce should be 14 x 3 x 3, with subject along dim 1, bias level (conservative --> liberal) along dim 2,
 # and strength (lure, weak, strong) along dim 3.
-delayed_counts_by_sub_bias <- arrange(delayed_counts_by_sub_bias, subject, desc(pOld)) %>%
-  mutate(H_S = replace(H_S, H_S == S_N, H_S[H_S == S_N]-1))
+delayed_counts_by_sub_bias <- arrange(delayed_counts_by_sub_bias, subject, desc(pOld))
 
 yes_matrix = t(as.matrix(delayed_counts_by_sub_bias[c('FA','H_W','H_S')]))
 dim(yes_matrix) <- c(3, 3, 14)
@@ -184,7 +326,7 @@ dimnames(yes_matrix) <- list("Strength" = c("Lure","Weak","Strong"),
                              "Subject" = 101:114)
 yes_matrix <- aperm(yes_matrix, c(2,1,3))
 
-trial_matrix = t(as.matrix(delayed_counts_by_sub_bias[c('FA_N','W_N','S_N')]))
+trial_matrix = t(as.matrix(delayed_counts_by_sub_bias[c('L_N','W_N','S_N')]))
 dim(trial_matrix) <- c(3, 3, 14)
 dimnames(trial_matrix) <- list("Strength" = c("Lure","Weak","Strong"),
                                "Bias" = c("Lib.","Neutral","Cons."),
@@ -206,7 +348,7 @@ fit <- stan(file = file.path(root_dir, "R","UVSD.stan"),
             )
 ```
 
-```{r parameter_summaries, cache=TRUE, dependson=c("stan_model")}
+```{r Stan_parameter_summaries, cache=TRUE, dependson=c("stan_model")}
 posterior <- as.data.frame(extract(fit))
 
 ## Subject level parameters
@@ -216,7 +358,8 @@ sub_level_params <- select(posterior, contains("_sub")) %>%
   separate(parameter, into = c("parameter", "statistic"),
          sep = "(?<=[0-9])_", fill = "right") %>%
   separate(parameter, into = c("parameter","subject","which"),
-           sep = "\\.", fill = "right", convert = TRUE)
+           sep = "\\.", fill = "right", convert = TRUE) %>%
+  mutate(subject = as.character(subject + 100))
 
 subject_dprimes <- filter(sub_level_params, parameter=="mu_sub", statistic=="mean") %>%
   mutate(strength = ifelse(which==1,"Weak","Strong")) %>%
@@ -238,13 +381,109 @@ sub_crit <- filter(sub_level_params, parameter=="crit_sub", statistic=="mean") %
 sub_param_means <- inner_join(subject_dprimes, sub_sigma, by = "subject") %>%
   inner_join(sub_crit, by="subject")
 
+sub_param_means_avg <- select(sub_param_means, -subject) %>%
+  colMeans() %>%
+  as.data.frame(x = t(.))
+
 ## Hyper Parameters
 hyper <- select(posterior, contains("_pop")) %>%
   summarise_all(.funs = funs(mean)) %>%
   mutate(sigma_pop = exp(log_sigma_pop),
          sigma_pop_SD = exp(log_sigma_pop_SD)) %>%
-  select(mu_pop.1, mu_pop_SD.1, mu_pop.2, mu_pop_SD.2, sigma_pop, sigma_pop_SD,
+  select(d.W_mu = mu_pop.1, d.W_sd = mu_pop_SD.1, d.S_mu=mu_pop.2, d.S_sd = mu_pop_SD.2,
+         sigma_mu = sigma_pop, sigma_sd = sigma_pop_SD,
          crit_pop.3, crit_pop_SD.3, crit_pop.2, crit_pop_SD.2, crit_pop.1, crit_pop_SD.1)
+```
+
+```{r Stan_ROC_predictions}
+Stan_ROC_preds <- rowwise(sub_param_means) %>%
+  mutate(SDT = list(
+    data.frame(FAR = rep(FAR_points, 2),
+               HR = pnorm(c((qnorm(FAR_points) + Weak)/sigma,
+                            (qnorm(FAR_points) + Strong)/sigma
+                          )),
+               strength = factor(rep(c("W", "S"), each = length(FAR_points)),
+                                 levels=c("W","S"))
+               )
+  )) %>%
+  select(subject, SDT) %>%
+  unnest()
+
+Stan_ROC_preds_hyper <-
+  summarise(.data = hyper,
+            SDT = list(data.frame(
+                FAR = rep(FAR_points, 2),
+                HR = pnorm(c((qnorm(FAR_points) + d.W_mu)/sigma_mu,
+                             (qnorm(FAR_points) + d.S_mu)/sigma_mu
+                           )),
+                strength = factor(rep(c("W", "S"), each = length(FAR_points)),
+                                levels=c("W","S")
+                                )
+                ))
+            )%>%
+  unnest()
+
+Stan_ROC_preds_avg <-
+  summarise(.data = sub_param_means_avg,
+            SDT = list(data.frame(
+                FAR = rep(FAR_points, 2),
+                HR = pnorm(c((qnorm(FAR_points) + Weak)/sigma,
+                            (qnorm(FAR_points) + Strong)/sigma
+                           )),
+                strength = factor(rep(c("W", "S"), each = length(FAR_points)),
+                                levels=c("W","S")
+                                )
+                ))
+            )%>%
+  unnest()
+```
+
+```{r Stan_ROC_hyperparmeters_plot}
+ggplot(MLE_ROC_preds_avg,
+       aes(x=FAR, y=HR, linetype=strength)) +
+  geom_line(size=1.75) +
+  geom_point(aes(color=factor(pOld)),
+             data = avg_obs_ROC_data,
+             size=4) +
+  scale_x_continuous("False Alarm Rate", limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_linetype_discrete("Item",
+                          labels=c("W" = "'Weak' Target",
+                                   "S" = "'Strong' Target")) +
+  scale_color_manual("p(Old)", values = c("#d82d2d", "#d8d834", "#17b50c")) +
+  guides(colour = guide_legend(override.aes = list(size = 4)),
+         shape = guide_legend(override.aes = list(size = 4))) +
+  coord_fixed() +
+  ggtitle("UVSD Model ROC",subtitle = "Population Paramters") +
+  theme_bw(base_size = 16) +
+  theme(plot.title = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.width = unit(10,"mm")
+        )
+
+ggplot(Stan_ROC_preds_avg,
+       aes(x=FAR, y=HR, linetype=strength)) +
+  geom_line(size=1.75) +
+  geom_point(aes(color=factor(pOld)),
+             data = avg_obs_ROC_data,
+             size=4) +
+  scale_x_continuous("False Alarm Rate", limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_linetype_discrete("Item",
+                          labels=c("W" = "'Weak' Target",
+                                   "S" = "'Strong' Target")) +
+  scale_color_manual("p(Old)", values = c("#d82d2d", "#d8d834", "#17b50c")) +
+  guides(colour = guide_legend(override.aes = list(size = 4)),
+         shape = guide_legend(override.aes = list(size = 4))) +
+  coord_fixed() +
+  ggtitle("UVSD Model ROC",subtitle = "Averaged Subject Parameters") +
+  theme_bw(base_size = 16) +
+  theme(plot.title = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.width = unit(10,"mm")
+        )
 ```
 
 ```{r posterior_display, dependson=c('parameter_summaries')}
@@ -252,6 +491,8 @@ kable(sub_param_means, digits=3, escape = FALSE,
       caption = "Subject-level parameter means",
       col.names = c("Subject", parameter_colnames)) %>%
   kable_styling(full_width = FALSE, position = "left") 
+
+hyperparam_colnames <- rep(c("\u03BC", "\u03c3"), 6)
 
 kable(hyper, digits=3, escape = FALSE,
       caption = "Hyperparameter means",
@@ -261,13 +502,40 @@ kable(hyper, digits=3, escape = FALSE,
                    escape = FALSE)
 ```
 
+
+```{r Stan_ROC_sub_plot, fig.width=9, fig.height=9}
+ggplot(Stan_ROC_preds,
+       aes(x=FAR, y=HR, linetype=strength)) +
+  geom_line(size=1.75) +
+  geom_point(aes(color=factor(pOld)),
+             data = obs_ROC_data,
+             size=2) +
+  facet_wrap(~subject, labeller = label_both) +
+  scale_x_continuous("False Alarm Rate", limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_linetype_discrete("Item",
+                          labels=c("W" = "'Weak' Target",
+                                   "S" = "'Strong' Target")) +
+  scale_color_manual("p(Old)", values = c("#d82d2d", "#d8d834", "#17b50c")) +
+  guides(colour = guide_legend(override.aes = list(size = 4)),
+         shape = guide_legend(override.aes = list(size = 4))) +
+  ggtitle("UVSD Model ROC") +
+  theme_bw(base_size = 16) +
+  theme(plot.title = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.width = unit(10,"mm"),
+        legend.position = c(.7, .10),
+        legend.box = "horizontal")
+```
+
+
+### Parameter Correlations
 ```{r MLE_vs_bayes_point}
-ggplot(bind_rows(MLE = select(UVSD_fits, subject, Weak = d.W, Strong = d.S, sigma = s,
-                              crit_C = crit1, crit_N = crit2, crit_L = crit3) %>%
-                   mutate(subject = as.numeric(subject)),
+ggplot(bind_rows(MLE = select(UVSD_MLE_params, subject, Weak = d.W, Strong = d.S, sigma = s,
+                              crit_C = c.C, crit_N = c.N, crit_L = c.L),
                  Bayes = rename(sub_param_means, crit_C = crit_sub_3,
-                                crit_N = crit_sub_2, crit_L = crit_sub_1) %>%
-                   mutate(subject = subject + 100),
+                                crit_N = crit_sub_2, crit_L = crit_sub_1),
                  .id = "model") %>%
          gather("param","value", -subject, -model) %>%
          spread(model, value) %>%
@@ -297,8 +565,9 @@ jags_posterior_subjects <- spread_draws(UVSD_jags_posterior, mu[subject], se[sub
          crit1 = (mu/2) + c + bec,
          crit2 = (mu/2) + c,
          crit3 = (mu/2) + c + bel) %>%
-  select(.chain:subject, weak=mu, strong, sigma, crit1, crit2, crit3) %>%
-  mean_hdi()
+  select(.chain:subject, Weak=mu, Strong = strong, sigma, crit1, crit2, crit3) %>%
+  mean_hdi() %>%
+  mutate(subject = as.character(subject + 100))
 
 jags_posterior_hyper <- spread_draws(UVSD_jags_posterior, Mmu, SDmu, Mse, SDse, Mlsig, SDlsig,
                                      Mbec, Mc, Mbel, SDc, SDbe) %>%
@@ -330,3 +599,22 @@ kable(select(jags_posterior_hyper, -contains(".")),
                    escape = FALSE)
 ```
 
+```{r JAGS_vs_Stan}
+ggplot(bind_rows(stan = rename(sub_param_means, crit_C = crit_sub_3,
+                                crit_N = crit_sub_2, crit_L = crit_sub_1),
+                 jags = rename(select(jags_posterior_subjects, -contains(".")),
+                               crit_C = crit1, crit_N = crit2, crit_L = crit3),
+                 .id = "model") %>%
+         gather("param","value", -subject, -model) %>%
+         spread(model, value) %>%
+         mutate(param = factor(param, levels=c("Weak","Strong","sigma",
+                                               "crit_L", "crit_N","crit_C"),
+                               labels = c('d[W]','d[S]',"sigma",'C[L]','C[N]','C[C]'))
+                ),
+       aes(x=jags, y=stan)) +
+  geom_point(size=2) +
+  geom_abline(slope = 1, intercept = 0) +
+  xlab("JAGS") +
+  ylab("Stan") +
+  facet_wrap(~param, labeller = label_parsed)
+```
