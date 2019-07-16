@@ -17,7 +17,7 @@ editor_options:
 ```
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center", cache = TRUE)
 library(rprojroot)
 library(dplyr)
 library(tidyr)
@@ -32,12 +32,12 @@ options(mc.cores = parallel::detectCores())
 root_dir <- rprojroot::is_rstudio_project$find_file()
 ```
 
-```{r load_data}
+```{r load_data, cache.extra = tools::md5sum(file.path(root_dir, "data","SvDPRec.Rdata"))}
 load(file.path(root_dir, "data","SvDPRec.Rdata"))
 test <- select(test, -list)
 ```
 
-```{r cell_counts}
+```{r cell_counts, dependson=c("load_data")}
 delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
   select(-starts_with("speeded")) %>%
   rename(correct = delayed_correct) %>%
@@ -140,7 +140,7 @@ fit_SDT <- function(theta, ...) {
 }
 ```
 
-```{r MLE_fit}
+```{r MLE_fit, dependson=c("cell_counts", "SDT_model_functions")}
 UVSD_fits_optimx <- foreach(sub = split(delayed_counts_by_sub_bias,
                                         delayed_counts_by_sub_bias$subject)
                      ) %do% {
@@ -176,13 +176,17 @@ UVSD_fits_optimx <- foreach(sub = split(delayed_counts_by_sub_bias,
 UVSD_MLE_fits <- bind_rows(UVSD_fits_optimx)
 ```
 
-```{r MLE_GOF, dependson="MLE_fit"}
+```{r MLE_parameter_summaries, dependson="MLE_fit"}
 UVSD_MLE_params <- select(.data = UVSD_MLE_fits,
                           subject, d.W, d.S, s, c.C = crit1, c.N = crit2, c.L = crit3)
-UVSD_MLE_params_avg <- summarise_at(UVSD_MLE_params,
-                                    .vars = c("d.W", "d.S", "s", "c.C", "c.N", "c.L"),
-                                    .funs = "mean")
+UVSD_MLE_params_avg <- mutate(UVSD_MLE_params,
+                              s = s^2) %>%
+  summarise_at(.vars = c("d.W", "d.S", "s", "c.C", "c.N", "c.L"),
+               .funs = "mean") %>%
+  mutate(s = sqrt(s))
+```
 
+```{r MLE_GOF, dependson="MLE_fit"}
 UVSD_MLE_GOF <- select(UVSD_MLE_fits, subject, LL, fevals, gevals, niter, convcode) %>%
   left_join(null_LL, by="subject") %>%
   mutate(calc_G2 = -2*(LL - null_LL)) %>%
@@ -201,7 +205,7 @@ UVSD_MLE_GOF_sum <- select(.data = UVSD_MLE_GOF,
 rm(UVSD_MLE_fits)
 ```
 
-```{r MLE_ROC_predictions}
+```{r MLE_ROC_predictions, dependson="MLE_parameter_summaries"}
 FAR_points <- seq(0, 1, .01)
 
 MLE_ROC_preds <- rowwise(UVSD_MLE_params) %>%
@@ -232,7 +236,7 @@ MLE_ROC_preds_avg <-
   unnest()
 ```
 
-```{r MLE_ROC_avg_plot, fig.width=9}
+```{r MLE_ROC_avg_plot, fig.width=9, dependson="MLE_ROC_predictions"}
 ggplot(MLE_ROC_preds_avg,
        aes(x=FAR, y=HR, linetype=strength)) +
   geom_line(size=1.75) +
@@ -257,7 +261,7 @@ ggplot(MLE_ROC_preds_avg,
         )
 ```
 
-```{r MLE_parameters, dependson=c("MLE_fit")}
+```{r MLE_tables, dependson=c("MLE_GOF", "MLE_parameter_summaries")}
 parameter_colnames <- c("d'<sub>W</sub>", "d'<sub>S</sub>", "\u03c3",
                         "C<sub>c</sub>", "C<sub>n</sub>", "C<sub>l</sub>")
 
@@ -282,7 +286,7 @@ bind_rows(select(.data = UVSD_MLE_GOF,
   column_spec(1, bold = TRUE)
 ```
 
-```{r MLE_ROC_sub_plot, fig.width=9, fig.height=9}
+```{r MLE_ROC_sub_plot, fig.width=9, fig.height=9, dependson="MLE_ROC_predictions"}
 ggplot(MLE_ROC_preds,
        aes(x=FAR, y=HR, linetype=strength)) +
   geom_line(size=1.75) +
@@ -310,10 +314,10 @@ ggplot(MLE_ROC_preds,
 
 ## Hierarchical Bayesian Estimation
 ### Will's Stan Model
-```{stan stan_model_external, eval=FALSE, echo=TRUE, output.var='modelstring', code=readLines(file.path(root_dir, "R","UVSD.stan"))}
+```{stan stan_model_external, cache=FALSE, eval=FALSE, echo=TRUE, output.var='modelstring', code=readLines(file.path(root_dir, "R","UVSD.stan"))}
 ```
 
-```{r stan_model, cache=TRUE, results="hide", cache.extra = tools::md5sum(file.path(root_dir, "R","UVSD.stan"))}
+```{r stan_model, results="hide", cache.extra = tools::md5sum(file.path(root_dir, "R","UVSD.stan"))}
 # Create an array suitable for passing into stan, so it can be turned into an array of matrices
 # The final produce should be 14 x 3 x 3, with subject along dim 1, bias level (conservative --> liberal) along dim 2,
 # and strength (lure, weak, strong) along dim 3.
@@ -382,8 +386,10 @@ sub_param_means <- inner_join(subject_dprimes, sub_sigma, by = "subject") %>%
   inner_join(sub_crit, by="subject")
 
 sub_param_means_avg <- select(sub_param_means, -subject) %>%
+  mutate(sigma = sigma^2) %>%
   colMeans() %>%
-  as.data.frame(x = t(.))
+  as.data.frame(x = t(.)) %>%
+  mutate(sigma = sqrt(sigma))
 
 ## Hyper Parameters
 hyper <- select(posterior, contains("_pop")) %>%
@@ -395,7 +401,7 @@ hyper <- select(posterior, contains("_pop")) %>%
          crit_pop.3, crit_pop_SD.3, crit_pop.2, crit_pop_SD.2, crit_pop.1, crit_pop_SD.1)
 ```
 
-```{r Stan_ROC_predictions}
+```{r Stan_ROC_predictions, dependson=c("Stan_parameter_summaries")}
 Stan_ROC_preds <- rowwise(sub_param_means) %>%
   mutate(SDT = list(
     data.frame(FAR = rep(FAR_points, 2),
@@ -438,7 +444,7 @@ Stan_ROC_preds_avg <-
   unnest()
 ```
 
-```{r Stan_ROC_hyperparmeters_plot}
+```{r Stan_ROC_population_plot, dependson=c("Stan_ROC_predictions")}
 ggplot(MLE_ROC_preds_avg,
        aes(x=FAR, y=HR, linetype=strength)) +
   geom_line(size=1.75) +
@@ -486,11 +492,11 @@ ggplot(Stan_ROC_preds_avg,
         )
 ```
 
-```{r posterior_display, dependson=c('parameter_summaries')}
+```{r stan_posterior_summary_tables, dependson=c("Stan_parameter_summaries")}
 kable(sub_param_means, digits=3, escape = FALSE,
       caption = "Subject-level parameter means",
       col.names = c("Subject", parameter_colnames)) %>%
-  kable_styling(full_width = FALSE, position = "left") 
+  kable_styling(full_width = FALSE, position = "left")
 
 hyperparam_colnames <- rep(c("\u03BC", "\u03c3"), 6)
 
@@ -503,7 +509,7 @@ kable(hyper, digits=3, escape = FALSE,
 ```
 
 
-```{r Stan_ROC_sub_plot, fig.width=9, fig.height=9}
+```{r Stan_ROC_sub_plot, fig.width=9, fig.height=9, dependson=c("Stan_ROC_predictions")}
 ggplot(Stan_ROC_preds,
        aes(x=FAR, y=HR, linetype=strength)) +
   geom_line(size=1.75) +
@@ -531,7 +537,7 @@ ggplot(Stan_ROC_preds,
 
 
 ### Parameter Correlations
-```{r MLE_vs_bayes_point}
+```{r MLE_vs_bayes_point, dependson=c("Stan_parameter_summaries", "MLE_parameter_summaries")}
 ggplot(bind_rows(MLE = select(UVSD_MLE_params, subject, Weak = d.W, Strong = d.S, sigma = s,
                               crit_C = c.C, crit_N = c.N, crit_L = c.L),
                  Bayes = rename(sub_param_means, crit_C = crit_sub_3,
@@ -550,14 +556,16 @@ ggplot(bind_rows(MLE = select(UVSD_MLE_params, subject, Weak = d.W, Strong = d.S
 ```
 
 ### Jeff's JAGS Model
-```{r jags_model_source_code, comment=""}
+```{r jags_model_source_code, cache=FALSE, comment=""}
 cat(readLines(file.path(root_dir, "R", "uv.bug")), sep="\n")
 ```
 
-```{r jags_model_posterior}
+```{r jags_model}
 ## loads mcmc.list object named 'UVSD_jags_posterior'
 load(file = file.path(root_dir, "data", "uvPosts.RData"))
+```
 
+```{r jags_parameter_summaries, dependson="jags_model"}
 jags_posterior_subjects <- spread_draws(UVSD_jags_posterior, mu[subject], se[subject], lsig[subject],
                                         bec[subject], c[subject], bel[subject]) %>%
   mutate(strong = mu + se,
@@ -582,7 +590,7 @@ jags_posterior_hyper <- spread_draws(UVSD_jags_posterior, Mmu, SDmu, Mse, SDse, 
   mean_hdi()
 ```
 
-```{r jags_posterior_display}
+```{r jags_posterior_summary_tables, dependson="jags_parameter_summary"}
 kable(select(jags_posterior_subjects, -contains(".")),
       digits=3, escape = FALSE,
       caption = "Subject-level parameter means",
@@ -599,7 +607,7 @@ kable(select(jags_posterior_hyper, -contains(".")),
                    escape = FALSE)
 ```
 
-```{r JAGS_vs_Stan}
+```{r JAGS_vs_Stan, dependson=c("jags_parameter_summaries", "Stan_parameter_summaries")}
 ggplot(bind_rows(stan = rename(sub_param_means, crit_C = crit_sub_3,
                                 crit_N = crit_sub_2, crit_L = crit_sub_1),
                  jags = rename(select(jags_posterior_subjects, -contains(".")),
