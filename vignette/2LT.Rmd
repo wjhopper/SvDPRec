@@ -1,0 +1,258 @@
+---
+title: "Two Low-Threshold Modeling"
+author: "William Hopper"
+date: "`r format(Sys.Date(), '%b %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+editor_options:
+  chunk_output_type: console
+---
+```{css css}
+.main-container {
+    max-width: 1100px;
+  }
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center", cache=TRUE)
+library(rprojroot)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(kableExtra)
+library(optimx)
+library(foreach)
+library(rstan)
+library(tidybayes)
+library(ggplot2)
+library(MPTinR)
+library(doParallel)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+root_dir <- rprojroot::is_rstudio_project$find_file()
+```
+
+```{r load_data}
+load(file.path(root_dir, "data","SvDPRec.Rdata"))
+test <- select(test, -list)
+```
+
+```{r cell_counts, dependson="load_data"}
+delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
+  select(-starts_with("speeded")) %>%
+  rename(correct = delayed_correct) %>%
+  count(subject, strength, pOld, correct) %>%
+  complete(subject, strength, pOld, correct,
+           fill = list(n=0)) %>%
+  unite(col = "resp_type", strength, correct) %>%
+  spread(resp_type, n) %>%
+  rename(FA = L_FALSE, CR = L_TRUE,
+         M_S = S_FALSE, H_S = S_TRUE,
+         M_W = W_FALSE, H_W = W_TRUE) %>%
+  mutate(L_N = FA + CR,
+         S_N = M_S + H_S,
+         W_N = M_W + H_W) %>%
+  select(subject, pOld, FA, L_N, H_S, S_N, H_W, W_N)
+
+```
+
+```{r empirical_roc_data, dependson="cell_counts"}
+obs_ROC_data <- mutate(delayed_counts_by_sub_bias,
+                       FAR = FA/L_N,
+                       HR_W = H_W/W_N,
+                       HR_S = H_S/S_N,
+                       pOld = sprintf("%2.0f%%", pOld*100)) %>%
+  select(subject, pOld, FAR, HR_W, HR_S) %>%
+  gather(key="strength", value="HR", HR_W, HR_S) %>%
+  mutate(strength = sub("HR_", "", strength)) %>%
+  select(subject, pOld, strength, FAR, HR)
+
+avg_obs_ROC_data <- group_by(obs_ROC_data, pOld, strength) %>%
+  summarise_at(.vars = c("FAR", "HR"), .funs = "mean") %>%
+  ungroup()
+```
+
+```{r null_LL, dependson=c("cell_counts")}
+null_LL <- mutate(delayed_counts_by_sub_bias,
+                  FA_LL = dbinom(FA, L_N, FA / L_N, log = TRUE),
+                  HW_LL = dbinom(H_W, W_N, H_W / W_N, log = TRUE),
+                  HS_LL = dbinom(H_S, S_N, H_S / S_N, log = TRUE),
+                  LL = FA_LL + HW_LL + HS_LL) %>% 
+  select(subject, pOld, LL) %>%
+  group_by(subject) %>%
+  summarise(null_LL = sum(LL))
+```
+
+```{r std_2LT_LL}
+twoLT <- function(theta) {
+  
+  FAR <- theta['FL']*(1-theta['DN'])*theta[c("GO_Cons", "GO_Neut", "GO_Lib")] +
+         (1-theta['FL'])*theta['DO_N'] +
+         (1-theta['FL'])*(1-theta['DO_N'])*theta[c("GO_Cons", "GO_Neut", "GO_Lib")]
+
+  HR_W <- theta['FT']*theta['DO_W'] +
+          theta['FT']*(1-theta['DO_W'])*theta[c("GO_Cons", "GO_Neut", "GO_Lib")] +
+          (1-theta['FT'])*(1-theta['DN'])*theta[c("GO_Cons", "GO_Neut", "GO_Lib")]
+
+  HR_S <- theta['FT']*theta['DO_S'] +
+          theta['FT']*(1-theta['DO_S'])*theta[c("GO_Cons", "GO_Neut", "GO_Lib")] +
+          (1-theta['FT'])*(1-theta['DN'])*theta[c("GO_Cons", "GO_Neut", "GO_Lib")]
+
+  return(list(FAR=FAR, HR_W=HR_W, HR_S=HR_S))
+}
+
+twoLT_LL <- function(theta, counts) {
+  
+  preds <- twoLT(theta)
+
+  LL <- c(dbinom(counts$H_S, size = counts$S_N, prob = preds$HR_S, log=TRUE),
+          dbinom(counts$H_W, size = counts$W_N, prob = preds$HR_W, log=TRUE),
+          dbinom(counts$FA, size = counts$L_N, prob = preds$FAR, log=TRUE)
+          )
+  return(-sum(LL))
+}
+
+twoLT_G2 <- function(theta, counts) {
+  
+  preds <- twoLT(theta)
+
+  LL <- c(dbinom(counts$H_S, size = counts$S_N, prob = preds$HR_S, log=TRUE),
+          dbinom(counts$H_W, size = counts$W_N, prob = preds$HR_W, log=TRUE),
+          dbinom(counts$FA, size = counts$L_N, prob = preds$FAR, log=TRUE)
+          )
+  return(-sum(LL))
+}
+```
+
+```{r std_2LT_fit, dependson=c("std_2LT_LL","cell_counts")}
+twoLT_std_fit_optimx <- foreach(sub = split(delayed_counts_by_sub_bias,
+                                           delayed_counts_by_sub_bias$subject)
+                            ) %do% {
+
+    fit <- optimx(par = c("FT"=.5, "FL"=.5, "DN"=.5, "DO_N"=.25, "DO_W"=.5, "DO_S"=.75,
+                          "GO_Cons"=.25, 'GO_Neut'=.5, 'GO_Lib'=.75
+                          ),
+                  fn = twoLT_LL,
+                  method = "nlminb",
+                  itnmax = 3000,
+                  lower = c(0, 0, 0, 0, 0, 0, 0, 0, 0),
+                  upper = c(1, 1, 1, 1, 1, 1, 1, 1, 1),
+                  control = list(kkt=FALSE),
+                  counts = sub
+                  )
+    fit$subject <- sub$subject[1]
+    fit
+  }
+rm(fit, sub)
+```
+
+```{r std_twoLT_GOF, dependson="std_2LT_fit"}
+twoLT_std_fits <- bind_rows(twoLT_std_fit_optimx)
+
+twoLT_std_params <- select(.data = twoLT_std_fits,
+                           subject, FT, FL, DN, DO_N, DO_W, DO_S, GO_Cons, GO_Neut, GO_Lib)
+twoLT_std_avg_params <- summarise_at(twoLT_std_params,
+                                     .vars = c("FT","FL","DN","DO_N","DO_W","DO_S",
+                                               "GO_Cons", "GO_Neut", "GO_Lib"),
+                                     .funs = "mean")
+
+twoLT_std_GOF <- select(twoLT_std_fits, subject, LL = value, fevals, gevals, niter, convcode) %>%
+  mutate(LL = -LL) %>%
+  left_join(null_LL, by="subject") %>%
+  mutate(calc_G2 = -2*(LL - null_LL)) %>%
+  select(subject, LL, null_LL, calc_G2, fevals:convcode)
+
+twoLT_std_sum_GOF <- select(.data = twoLT_std_GOF,
+                            subject, LL, null_LL, calc_G2) %>%
+  summarise_at(.vars = c("LL", "null_LL", "calc_G2"),
+               .funs = "sum")
+
+rm(twoLT_std_fits)
+```
+
+```{r std_twoLT_predictions, dependson="std_2LT_fit"}
+group_by(twoLT_std_params, subject) %>%
+  transmute(x = list(as.data.frame(
+      twoLT(c(FT=FT, FL=FL, DN=DN, DO_N=DO_N, DO_W=DO_W, DO_S=DO_S,
+              GO_Cons=GO_Cons, GO_Neut=GO_Neut, GO_Lib=GO_Lib
+            ))
+    ))) %>% 
+  unnest() %>%
+  rename(S=HR_S, W=HR_W) %>%
+  gather(key = "strength", value="HR", S, W)
+
+# FAR_points <- seq(0, 1, .01)
+
+# twoLT_std_sub_ROC_preds <- group_by(twoLT_std_params, subject) %>%
+#   mutate(twoLT = list(
+#     data.frame(FAR = rep(FAR_points, 2),
+#                strength = factor(rep(c("W", "S"), each = length(FAR_points)),
+#                                  levels = c("W", "S")),
+#                HR = c( ((1-DO_W)/(1-DN)*FAR_points) + DO_W,
+#                        ((1-DO_S)/(1-DN)*FAR_points) + DO_S
+#                ))
+#     
+#     )) %>%
+#   select(subject, twoLT) %>%
+#   unnest()
+# 
+# twoLT_std_avg_ROC_preds <- select(twoLT_std_params, -subject) %>%
+#   summarise_all("mean") %>%
+#   summarise(twoLT = list(
+#     data.frame(FAR = rep(FAR_points, 2),
+#                strength = factor(rep(c("W", "S"), each = length(FAR_points)),
+#                                  levels = c("W", "S")),
+#                HR = c( ((1-DO_W)/(1-DN)*FAR_points) + DO_W,
+#                        ((1-DO_S)/(1-DN)*FAR_points) + DO_S
+#                ))
+#     
+#     )) %>%
+#   unnest()
+```
+
+```{r std_twoLT_plots, fig.width=9, dependson="std_2LT_fit"}
+ggplot(filter(twoLT_std_avg_ROC_preds, HR <= 1),
+       aes(x=FAR, y=HR, linetype=strength)) +
+  geom_line(size=1.75) +
+  geom_point(aes(color=factor(pOld)),
+             data = avg_obs_ROC_data,
+             size=4) +
+  scale_x_continuous("False Alarm Rate", limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_linetype_discrete("Item",
+                          labels=c("W" = "'Weak' Target",
+                                   "S" = "'Strong' Target")) +
+  scale_color_manual("p(Old)", values = c("#d82d2d", "#d8d834", "#17b50c")) +
+  guides(colour = guide_legend(override.aes = list(size = 4)),
+         shape = guide_legend(override.aes = list(size = 4))) +
+  coord_fixed() +
+  ggtitle("Two-LT Model ROC (Average)") +
+  theme_bw(base_size = 26) +
+  theme(plot.title = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.width = unit(10,"mm"))
+
+```
+
+```{r std_twoLT_parameters, dependson="std_2LT_fit"}
+bind_rows(twoLT_std_params,
+          mutate(twoLT_std_avg_params, subject = "Mean")
+          ) %>%
+  tibble::column_to_rownames(var="subject") %>%
+  kable(type="HTML", digits=3) %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+  column_spec(1, bold = TRUE)
+
+bind_rows(select(.data = twoLT_std_GOF,
+                 subject, LL, null_LL, calc_G2, df, p.value),
+          mutate(.data = twoLT_std_sum_GOF,
+                 subject = "Sum")
+          ) %>%
+  tibble::column_to_rownames(var="subject") %>%
+  kable(type="HTML", digits=3) %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+  column_spec(1, bold = TRUE)
+```
