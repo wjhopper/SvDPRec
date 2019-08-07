@@ -75,11 +75,6 @@ speeded_acc <- filter(test, !is.na(type)) %>%
 
 ```{r SDT_model_functions, cache=TRUE, dependson=c("cell_counts")}
 SDT <- function(d, s, crit) {
-
-  # if (is.unsorted(rev(crit))) {
-  #   # warning("Criterion locations will be sorted in descending order")
-  #   crit <- sort(crit, decreasing = TRUE)
-  # }
   
   if (length(d) != 2L) {
     stop("Only 2 target distributions may be specified")
