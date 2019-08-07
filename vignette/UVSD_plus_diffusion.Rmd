@@ -109,18 +109,15 @@ SDT_LL <- function(H_S, H_W, FA, ...) {
 
 SDT2diffusion <- function(parameters) {
   
-    parameters['v.W'] <- parameters['v.L'] + parameters['v.W']*parameters['sv.L']
-    parameters['v.S'] <- parameters['v.L'] + parameters['v.S']*parameters['sv.L']
-    parameters['sv.T'] <- parameters['sv.T']*parameters['sv.L']
+    parameters['v.W'] <- parameters['v.L'] + parameters['d.W']*parameters['sv.L']
+    parameters['v.S'] <- parameters['v.L'] + parameters['d.S']*parameters['sv.L']
+    parameters['sv.T'] <- parameters['s']*parameters['sv.L']
     return(parameters)
 }
-diffusion_LL <- function(parameters, data, fixed=NULL, scale=FALSE){
+
+diffusion_LL <- function(parameters, data, fixed=NULL){
 
   parameters <- c(parameters, fixed)
-  
-  if (scale) {
-    parameters <- SDT2diffusion(parameters)
-  }
   
   log_likelihood <- 0
 
@@ -198,6 +195,42 @@ diffusion_LL <- function(parameters, data, fixed=NULL, scale=FALSE){
 - `crit2` = Threshold for neutral bias condition
 - `crit3` = Threshold for weak bias condition
 
+
+```{r starting_theta}
+starting_theta <- tribble(
+  ~subject,    ~a,    ~z,  ~t0,    ~st0,   ~v.L, ~sv.L, ~d.W,  ~d.S,   ~s, ~crit1, ~crit2, ~crit3,
+  "101",    0.989, 0.612, 0.342, 0.1848, -1.576, 1.167, 1.259, 2.630, 1.361, 1.273, 0.783, 0.293,
+  "102",    1.165, 0.621, 0.367, 0.2444, -0.414, 0.735, 0.699, 1.266, 1.036, 0.649, 0.189,-0.070,
+  "103",    0.846, 0.620, 0.399, 0.0365, -1.523, 0.406, 1.641, 2.528, 1.220, 1.200, 0.646, 0.004,
+  "104",    2.214, 0.532, 0.420, 0.0500, -2.595, 2.212, 1.826, 2.755, 1.172, 1.681, 1.123, 0.754,
+  "105",    0.915, 0.702, 0.244, 0.2873,  0.527, 1.594, 0.610, 1.531, 0.967, 1.274,-0.403,-1.217,
+  "106",    1.258, 0.560, 0.299, 0.2534, -1.367, 0.774, 1.489, 3.309, 1.509, 1.237, 0.825, 0.488,
+  "107",    1.197, 0.562, 0.439, 0.2175, -1.861, 1.112, 1.396, 2.287, 1.167, 1.527, 0.800, 0.346,
+  "108",    0.939, 0.514, 0.392, 0.0974, -2.428, 0.309, 2.465, 3.950, 0.941, 1.894, 1.604, 1.203,
+  "109",    1.243, 0.656, 0.432, 0.0372, -2.646, 0.468, 2.547, 3.950, 1.214, 1.642, 1.541, 1.237,
+  "110",    0.840, 0.627, 0.335, 0.2182, -1.584, 0.237, 1.165, 2.236, 0.870, 1.407, 0.988, 0.842,
+  "111",    0.947, 0.686, 0.432, 0.0944, -2.354, 0.214, 1.686, 3.552, 1.757, 1.406, 0.956, 0.209,
+  "112",    1.215, 0.630, 0.436, 0.1639, -1.222, 0.791, 0.987, 1.627, 0.586, 0.725, 0.674, 0.597,
+  "113",    1.259, 0.516, 0.483, 0.1166, -2.883, 1.006, 2.318, 3.950, 0.998, 1.994, 1.482, 1.436,
+  "114",    1.017, 0.615, 0.293, 0.2657, -1.082, 0.214, 0.995, 1.585, 0.956, 1.279, 0.720, 0.050,
+  "101",    0.998, 0.617, 0.342, 0.1853, -1.631, 1.369, 1.406, 3.020, 1.647, 1.291, 0.798, 0.259,
+  "102",    1.250, 0.607, 0.361, 0.2488, -0.284, 1.481, 0.650, 1.140, 0.849, 0.638, 0.217, 0.004,
+  "103",    0.770, 0.672, 0.373, 0.1635, -2.267, 1.690, 1.858, 3.000, 1.422, 1.232, 0.669,-0.003,
+  "104",    1.566, 0.517, 0.412, 0.013,  -0.885, 0.839, 1.579, 2.610, 1.110, 1.414, 0.994, 0.667,
+  "105",    0.897, 0.705, 0.245, 0.2900,  0.333, 0.943, 0.571, 1.520, 0.922, 1.265,-0.397,-1.186,
+  "106",    1.304, 0.563, 0.298, 0.2661, -1.465, 1.153, 1.725, 3.390, 1.540, 1.261, 0.870, 0.555,
+  "107",    1.227, 0.573, 0.438, 0.2248, -2.074, 1.531, 1.644, 2.840, 1.562, 1.614, 0.794, 0.313,
+  "108",    0.846, 0.500, 0.414, 0.0198, -0.268, 0.805, 1.644, 2.660, 0.995, 1.307, 1.008, 0.707,
+  "109",    1.033, 0.555, 0.405, 0.0911, -0.303, 0.916, 1.634, 2.660, 1.047, 1.271, 1.004, 0.733,
+  "110",    0.864, 0.638, 0.335, 0.2203, -1.703, 1.103, 1.250, 2.630, 1.136, 1.454, 1.000, 0.828,
+  "111",    1.002, 0.711, 0.432, 0.1018, -2.816, 1.594, 1.884, 3.980, 1.900, 1.425, 0.975, 0.205,
+  "112",    1.279, 0.634, 0.434, 0.1725, -1.322, 1.388, 1.435, 3.050, 1.305, 0.754, 0.702, 0.611,
+  "113",    1.206, 0.500, 0.450, 0.0396, -1.194, 1.124, 1.626, 3.000, 0.839, 1.516, 1.104, 0.901,
+  "114",    1.081, 0.646, 0.294, 0.2683, -1.460, 1.600, 1.083, 2.100, 1.452, 1.351, 0.721,-0.119
+)
+```
+
+
 ```{r fit, cache=TRUE, dependson=c("diffusion_functions", "SDT_model_functions")}
 cl <- parallel::makeCluster(parallel::detectCores(),
                             outfile = "",
@@ -205,24 +238,23 @@ cl <- parallel::makeCluster(parallel::detectCores(),
 
 doParallel::registerDoParallel(cl)
 
-SDT_diffusion_LL_sum <- function(theta, ...) {
+SDT_diffusion_LL_sum <- function(theta, data, theta_names, scale = TRUE) {
 
-  trailing <- list(...)
-
+  names(theta) <- theta_names
   SDT_nLL <- SDT_LL(d = theta[c("d.W","d.S")],
                     s = theta["s"],
                     crit = theta[c("crit1", "crit2", "crit3")],
-                    H_S = trailing$H_S,
-                    H_W = trailing$H_W,
-                    FA = trailing$FA
+                    H_S = data$biased[c("H_S","S_N")],
+                    H_W = data$biased[c("H_W", "W_N")],
+                    FA = data$biased[c("FA", "FA_N")]
                     )
 
-  diff_nLL <- diffusion_LL(theta[c("a", "z", "t0", "st0", "v.L", "sv.L")],
-                           data = trailing$data,
-                           fixed = c("v.W" = unname(theta["d.W"]),
-                                     "v.S" = unname(theta["d.S"]),
-                                     "sv.T" = unname(theta["s"])),
-                           scale = TRUE
+  if (scale) {
+    theta <- SDT2diffusion(theta)
+  }
+  
+  diff_nLL <- diffusion_LL(theta[c("a", "z", "t0", "st0", "v.L", "sv.L", "v.W", "v.S", "sv.T")],
+                           data = data$speeded
                            )
 
   negLL <- SDT_nLL + diff_nLL
@@ -234,13 +266,13 @@ SDT_diffusion_LL_sum <- function(theta, ...) {
 }
 
 subjectwise_datalist <- Map(
-  function(x,y) { list("speeded" = x,"biased" = y)},
+  function(x,y) { list("speeded" = x, "biased" = y)},
   split(speeded_RT_choice_quantiles, speeded_RT_choice_quantiles$subject),
   split(delayed_counts_by_sub_bias, delayed_counts_by_sub_bias$subject)
   )
 
 fits <- foreach(sub = subjectwise_datalist,
-                .packages = c("rtdists","optimx"))  %dopar% {
+                .packages = c("rtdists","optimx", "tibble"))  %dopar% {
 
   # Make incorrects the lower boundary responses (1) and 
   # corrects the upper boundary responses(2).
@@ -252,40 +284,50 @@ fits <- foreach(sub = subjectwise_datalist,
            )
     )
   
-  theta <- c("d.W" = 1.5, "d.S" = 2.5, "s" = 1.2,
-             crit = c(1.25, 1, .75),
-             "a" = 1, "z" = .5, "t0" = .1, "st0" = .1,
-             "v.L" = 0, "sv.L" = .5
-             )
-  fit <- optimx(par = theta,
-                fn = SDT_diffusion_LL_sum,
-                method = "nlminb",
-                itnmax = 3000,
-                lower = c("d.W" = 0, "d.S" = 0, "s" = 0.1,
-                        crit = c(-3, -3, -3),
-                        "a" = .01, "z" = 0.5, "t0" = .01, "st0" = .01,
-                        "v.L" = -5, "sv.L" = .1
-                        ),
-                upper = c("d.W" = 5, "d.S" = 5, "s" = 2,
-                        crit = c(3, 3, 3),
-                        "a" = 3, "z" = .95, "t0" = .5, "st0" = .5,
-                        "v.L" = 5, "sv.L" = 4
-                        ),
-                control = list(kkt=FALSE),
-                data = sub$speeded, # passed to diffusion_LL
-                H_S = sub$biased[c("H_S","S_N")], # passed to SDT_LL
-                H_W = sub$biased[c("H_W", "W_N")],# passed to SDT_LL
-                FA = sub$biased[c("FA", "FA_N")] # passed to SDT_LL
-              )
+  x <- starting_theta[starting_theta$subject == sub$speeded$subject[1], -1]
+  theta <- list(unlist(x[1,]), unlist(x[2,]),
+                c("a" = 1, "z" = .5, "t0" = .1, "st0" = .1, "v.L" = 0, "sv.L" = .5,
+                  "d.W" = 1.5, "d.S" = 2.5, "s" = 1.2, crit = c(1.25, 1, .75))
+                )
+  sub_fits <- list()
+  
+  for (i in 1:length(theta)) {
+    fit <- optimx(par = theta[[i]],
+                  fn = SDT_diffusion_LL_sum,
+                  method = c("nmkb", "nlminb"),
+                  itnmax = 3000,
+                  lower = c("a" = .01, "z" = 0.05, "t0" = .01, "st0" = .01,
+                            "v.L" = -5, "sv.L" = .1,
+                            "d.W" = 0, "d.S" = 0, "s" = 0.1,
+                            crit = c(-3, -3, -3)
+                            ),
+                  upper = c("a" = 3, "z" = .95, "t0" = .5, "st0" = .5,
+                            "v.L" = 5, "sv.L" = 4,
+                            "d.W" = 4, "d.S" = 4, "s" = 2,
+                            crit = c(3, 3, 3)
+                            ),
+                  control = list(kkt=FALSE, follow.on=FALSE),
+                  data = sub,
+                  theta_names = names(theta[[i]])
+                  )
+      fit$subject <- sub$speeded$subject[1]
+      fit <- tibble::rownames_to_column(fit, "method")
+      for (j in nrow(fit)) {
+        scaled <- SDT2diffusion(parameters = unlist(fit[j, c("d.W", "d.S", "s", "sv.L", "v.L")]))
+        fit[c("v.W","v.S","sv.T")] <- as.list(scaled[c("v.W","v.S","sv.T")])
+      }
+      sub_fits[[i]] <- fit
+  }
 
-  fit$subject <- sub$speeded$subject[1]
-  fit[c("v.W","v.S","sv.T")] <- fit[c("d.W","d.S","s")]  # This looks stupid but is useful
-  scaled <- SDT2diffusion(unlist(fit[c('v.L','sv.L',"v.W","v.S","sv.T")]))
-  fit[c("v.W","v.S","sv.T")] <- as.list(scaled[c("v.W","v.S","sv.T")])
-  fit
+  sub_fits
+
 }
 
-fits <- bind_rows(fits)
+fits <- lapply(fits, bind_rows) %>%
+  bind_rows() %>%
+  group_by(subject) %>%
+  filter(value == min(value)) %>%
+  ungroup()
 
 parallel::stopCluster(cl)
 ```
