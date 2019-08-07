@@ -181,7 +181,7 @@ diffusion_LL <- function(parameters, data, fixed=NULL){
 - `z` = starting point (parameterized here as a proportion of boundary separation)
 - `t0` = lower bound of non-decision RT component
 - `st0` = range of uniform distribution of non-decision times. NDT distribution is U(t0, t0+st0)
-- `v.L` = drift rate for lures (fixed at 1)
+- `v.L` = drift rate for lures
 - `v.W` = drift rate for weak targets
 - `v.S` = drift rate for strong targets
 - `sv.L` = inter-trial drift variance for lures
@@ -349,7 +349,7 @@ diffusion_params <- select(fits, subject, v.L, sv.L,v.W, v.S, sv.T, a:st0) %>%
 
 ```
 
-```{r SDT_preds, fig.height=12, fig.width=9, cache=TRUE, dependson="fit"}
+```{r SDT_sub_preds, fig.height=12, fig.width=9, cache=TRUE, dependson="fit"}
 FAR_points <- seq(0, 1, .01)
 SDT_preds <- rowwise(SDT_params) %>%
   mutate(SDT = list(
@@ -363,6 +363,7 @@ SDT_preds <- rowwise(SDT_params) %>%
     )) %>%
   select(subject, SDT) %>%
   unnest()
+
 
 ROC_by_sub <- mutate(delayed_counts_by_sub_bias,
          FAR = FA / FA_N,
@@ -397,6 +398,49 @@ ggplot(SDT_preds,
         legend.box = "horizontal")
 ```
 
+```{r SDT_avg_preds, fig.height=8, fig.width=8, cache=TRUE, dependson="fit"}
+SDT_preds_avg <-
+  summarise(.data = data.frame(t(colMeans(SDT_params[,2:7]))),
+            SDT = list(data.frame(
+                FAR = rep(FAR_points, 2),
+                HR = pnorm(c((qnorm(FAR_points) + d.W)/s,
+                             (qnorm(FAR_points) + d.S)/s
+                           )),
+                strength = factor(rep(c("W", "S"), each = length(FAR_points)),
+                                levels=c("W","S")
+                                )
+                ))
+            )%>%
+  unnest()
+
+avg_obs_ROC_data <- group_by(ROC_by_sub, pOld, strength) %>%
+  summarise_at(.vars = c("FAR", "HR"), .funs = "mean") %>%
+  ungroup()
+
+ggplot(SDT_preds_avg,
+       aes(x=FAR, y=HR, linetype=strength)) +
+  geom_line(size=1.75) +
+  geom_point(aes(color=factor(pOld)),
+             data = avg_obs_ROC_data,
+             size=4) +
+  scale_x_continuous("False Alarm Rate", limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_linetype_discrete("Item",
+                          labels=c("W" = "'Weak' Target",
+                                   "S" = "'Strong' Target")) +
+  scale_color_manual("p(Old)", values = c("#d82d2d", "#d8d834", "#17b50c")) +
+  guides(colour = guide_legend(override.aes = list(size = 4)),
+         shape = guide_legend(override.aes = list(size = 4))) +
+  coord_fixed() +
+  ggtitle("UVSD Model ROC (Average)") +
+  theme_bw(base_size = 16) +
+  theme(plot.title = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.width = unit(10,"mm")
+        )
+```
+
 ```{r diffusion_predictions, cache=TRUE, dependson="fit"}
 diffusion_acc_preds <- rowwise(diffusion_params) %>%
   mutate(p_resp_old = pdiffusion(Inf, response = 2, a=a, v=v, t0=t0, z=z*a, sv=sv, st0=st0),
@@ -409,6 +453,7 @@ accuracy <- bind_rows(predicted = select(mutate(diffusion_acc_preds, model="diff
                                          subject, model, strength, acc),
                       observed = mutate(speeded_acc, model = 'observed')
                       )
+
 diffusion_RT_quantiles <- rowwise(diffusion_params) %>%
   mutate(RT = list(as.data.frame(matrix(
                 qdiffusion(p = rep(c(.1, .3, .5, .7, .9), 2),
@@ -437,7 +482,53 @@ RT_quantiles <- bind_rows(predicted = mutate(diffusion_RT_quantiles, model="diff
                                   TRUE,
                                   FALSE)
          )
+
+conditional_quantiles <- left_join(RT_quantiles,
+                                   mutate(accuracy, inc = 1-acc) %>%
+                                     gather("acc", "p", acc, inc) %>%
+                                     mutate(speeded_correct = ifelse(acc=="acc",TRUE, FALSE)) %>%
+                                     select(subject, model, strength, speeded_correct, p),
+                                   by=c("subject", "model", "strength", "speeded_correct")) %>%
+  select(-speeded_judgment) %>%
+  rename(RT = value) %>%
+  mutate(strength = factor(strength, levels=c("L","W","S"),
+                           labels = c("Lure", "'Weak' Target", "'Strong' Target")),
+         quantile = as.numeric(sub("%", "", quantile, fixed = TRUE))/100)
+
+sub_conditional_quantiles <-  mutate(conditional_quantiles,
+                                     quantile = quantile * p) %>%
+  select(-p)
+
+avg_conditional_quantiles <- group_by(conditional_quantiles,
+                                      model, strength, quantile, speeded_correct) %>%
+  summarise_at(c("RT","p"), mean) %>%
+  ungroup() %>%
+  mutate(quantile = quantile * p) %>%
+  select(-p)
 ```
+
+```{r QP_plots, fig.width=10, fig.height=7}
+ggplot(avg_conditional_quantiles,
+       aes(x=RT, y=quantile, color=speeded_correct, linetype=model, shape=model)) +
+  geom_point(size=2) +
+  geom_line(size=1) +
+  facet_grid(~strength) +
+  scale_color_manual("Accuracy",
+                     values = RColorBrewer::brewer.pal(3, 'Set1')[1:2],
+                     breaks=c("FALSE","TRUE"),
+                     labels=c("Incorrect", "Correct")) +
+  scale_linetype_discrete(NULL, labels = c("diffusion" = "Diffusion", "observed" = "Observed")) +
+  ggtitle("UVSD + Diffusion Model",
+          subtitle="Conditional Quantiles (Average)") +
+  scale_x_continuous("Response Time (s.)") +
+  guides(shape = FALSE) +
+  theme_bw(base_size=16) +
+  theme(legend.key.size = unit(15,"mm"),
+        plot.title = element_text(hjust=.5),
+        plot.subtitle = element_text(hjust=.5),
+        strip.background = element_blank())
+```
+
 
 ```{r g2, cache=TRUE, dependson="fit"}
 speeded_RT_deviance <- speeded_RT_choice_quantiles %>%
