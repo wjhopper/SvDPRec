@@ -1,0 +1,486 @@
+---
+title: "Discrete Race Model Fits"
+author: "William Hopper"
+date: "`r format(Sys.Date(), '%b %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
+# library(gamlss)
+library(rprojroot)
+library(kableExtra)
+library(optimx)
+library(foreach)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+root_dir <- rprojroot::is_rstudio_project$find_file()
+```
+
+```{r discrete_race_exgaussians, cache=TRUE}
+## mu, sigma & nu should be vectors of length 2
+## First element should be parameter for detect distribution
+## Second element should be parameter for guess distribution
+
+## Weight is also vector of length
+## First element is probability of detection being available
+## Second element is probability of guessing correctly
+## These are independent probabilities, need not sum to 1
+dcRT <- function(x, mu, sigma, nu, weights) {
+  
+  pDetect_Old <- weights[1]
+  pFail <- weights[2]
+  pDetect_New <- weights[3]
+  pGuess_Correct <- weights[4:6]
+  
+  p_detect_process_unfinished <- gamlss.dist::pexGAUS(x, mu[1], sigma[1], nu[1], lower.tail = FALSE)
+  p_guess_process_unfinished <- gamlss.dist::pexGAUS(x, mu[2], sigma[2], nu[2], lower.tail = FALSE)
+  
+  detect_RT_density <- gamlss.dist::dexGAUS(x, mu[1], sigma[1], nu[1])
+  guess_RT_density <- gamlss.dist::dexGAUS(x, mu[2], sigma[2], nu[2])
+  
+  # Detect Old Pathway
+  DO <- pDetect_Old * p_guess_process_unfinished * detect_RT_density * pGuess_Correct[3]
+  # Detect New Pathway
+  DN <- pDetect_New * p_guess_process_unfinished * detect_RT_density * pGuess_Correct[1]
+  # Fail to Detect pathway, detection unavailable
+  FD <- (1 - pDetect_Old - pDetect_New) * guess_RT_density * pGuess_Correct[2]
+  # Fail to Detect pathway, guessing wins
+  FD_win <- (pDetect_Old + pDetect_New) * p_detect_process_unfinished * guess_RT_density * pGuess_Correct[2]
+  
+  correct_RT_density <- DO + DN + FD + FD_win
+  return(correct_RT_density)
+}
+
+## mu, sigma & nu should be vectors of length 2
+## Nu is mean of exponential process (also denoted as tao sometimes)
+## First element should be parameter for detect distribution
+## Second element should be parameter for guess distribution
+
+## Weight is also vector of length
+## First element is probability of detection being available
+## Second element is probability of guessing *incorrectly*
+## These are independent probabilities, need not sum to 1
+
+deRT <- function(x, mu, sigma, nu, weights) {
+  weights[4:6] <- 1 - weights[4:6]
+  incorrect_RT_density <- dcRT(x, mu, sigma, nu, weights)
+  return(incorrect_RT_density)
+}
+```
+
+```{r discrete_race_objective_functions, cache=TRUE}
+
+softmax <- function(x) {
+  return(exp(x)/sum(exp(x)))
+}
+
+ilogit <- function(x, max=1) {
+  return(max/(1+exp(-x)))
+}
+
+parameter_scaling <- function(theta) {
+
+  p <- numeric(length(theta) + 3)
+  names(p) <- c(names(theta), c("DN_L", "DN_W", "DN_S"))
+  p[c("DO_L", "FD_L", "DN_L")] <- softmax(c(theta[c("DO_L", "FD_L")], 0))
+  p[c("DO_W", "FD_W", "DN_W")] <- softmax(c(theta[c("DO_W", "FD_W")], 0))
+  p[c("DO_S", "FD_S", "DN_S")] <- softmax(c(theta[c("DO_S", "FD_S")], 0))
+  p["b"] <- -1 + ilogit(x = theta["b"], max=3)
+  p[c("mu.d", "mu.g", "sigma", "nu")] <- theta[c("mu.d", "mu.g", "sigma", "nu")]
+  return(p)
+}
+
+DR_predictions <- function(theta, data) {
+
+  theta<- parameter_scaling(theta)
+  O_DN <- abs(pmin(theta['b'], 0))
+  O_FD <- pmax(pmin(1-theta['b'], 1), 0)
+  O_DO <-  2 - pmax(theta['b'], 1)
+  
+  data$predicted_p <- numeric(nrow(data))
+
+  for (strength in unique(data$strength)) {
+
+    condition_index <- data$strength==strength
+    
+    if (strength == "L") {
+      weights <- c(theta[endsWith(names(theta), strength)], 1-O_DN, 1-O_FD, 1-O_DO)
+    } else {
+      weights <- c(theta[endsWith(names(theta), strength)], O_DN, O_FD, O_DO)
+    }
+
+    for (acc in unique(data$speeded_correct)) {
+
+      if (acc) {
+        density_fn = dcRT
+      } else {
+        density_fn = deRT
+      }
+
+      index_vector <- condition_index & data$speeded_correct == acc 
+      cutpoints <- c(0, data$value[index_vector])
+      cutpoints[length(cutpoints)] <- Inf
+
+      p <- numeric(length(cutpoints)-1)
+      for (bin_number in 1:length(p)) {
+
+        x <- integrate(density_fn, cutpoints[bin_number], cutpoints[bin_number+1],
+                       mu = theta[c("mu.d","mu.g")],
+                       sigma = theta[c("sigma","sigma")],
+                       nu = theta[c("nu","nu")],
+                       weights = weights
+                       )
+        p[bin_number] <- x$value
+      }
+
+      data$predicted_p[index_vector] <- p
+    }
+  }
+
+  return(data)
+}
+
+DR_quantiles <- function(theta, data) {
+  
+  theta<- parameter_scaling(theta)
+  O_DN <- abs(pmin(theta['b'], 0))
+  O_FD <- pmax(pmin(1-theta['b'], 1), 0)
+  O_DO <-  2 - pmax(theta['b'], 1)
+  
+  data$predicted_qValue <- numeric(nrow(data))
+
+  for (strength in unique(data$strength)) {
+
+    condition_index <- data$strength==strength
+    
+    if (strength == "L") {
+      weights <- c(theta[endsWith(names(theta), strength)], 1-O_DN, 1-O_FD, 1-O_DO)
+    } else {
+      weights <- c(theta[endsWith(names(theta), strength)], O_DN, O_FD, O_DO)
+    }
+
+
+    n_samples <- 1000
+    n_detect_trials <- rbinom(1, size = n_samples,
+                              p = theta[paste0(c("DN_", "DO_"), strength)]
+                              )
+    detect_RTs <- c(gamlss.dist::rexGAUS(n_detect_trials,
+                                         mu = parameters["mu.d"],
+                                         sigma = parameters["sigma"],
+                                         nu = parameters["nu"]),
+                    rep(Inf, n_samples - n_detect_trials)
+                    )
+
+    guess_RTs <- gamlss.dist::rexGAUS(n_samples,
+                                      mu = parameters["mu.g"],
+                                      sigma = parameters["sigma"],
+                                      nu = parameters["nu"]
+                                      )
+
+    RTs <- pmin(detect_RTs, guess_RTs)
+    detect_wins <- detect_RTs == RTs
+    accuracy <- logical(n_samples)
+    accuracy[detect_wins] <- TRUE
+    accuracy[!detect_wins] <- as.logical(rbinom(sum(!detect_wins), 1, guess_correctly))
+
+    data$predicted_qValue[data$speeded_correct] <-
+      quantile(RTs[accuracy], c(.1, .3, .5, .7, .9, 1))
+    
+    data$predicted_qValue[!data$speeded_correct] <-
+      quantile(RTs[!accuracy], c(.1, .3, .5, .7, .9, 1))
+  }
+
+  return(data)
+}
+
+
+DR_obj <- function(theta, data, fixed=NULL){
+
+  theta <- c(theta, fixed)
+  
+  theta<- parameter_scaling(theta)
+  O_DN <- abs(pmin(theta['b'], 0))
+  O_FD <- pmax(pmin(1-theta['b'], 1), 0)
+  O_DO <-  2 - pmax(theta['b'], 1)
+  
+  data$predicted_p <- numeric(nrow(data))
+  
+  log_likelihood <- 0
+
+  for (strength in unique(data$strength)) {
+
+    condition_index <- data$strength==strength
+    
+    if (strength == "L") {
+      weights <- c(theta[endsWith(names(theta), strength)], 1-O_DN, 1-O_FD, 1-O_DO)
+    } else {
+      weights <- c(theta[endsWith(names(theta), strength)], O_DN, O_FD, O_DO)
+    }
+
+    for (acc in unique(data$speeded_correct)) {
+
+      if (acc) {
+        density_fn = dcRT
+      } else {
+        density_fn = deRT
+      }
+
+      index_vector <- condition_index & data$speeded_correct == acc 
+      cutpoints <- c(0, data$value[index_vector])
+      cutpoints[length(cutpoints)] <- Inf
+
+      p <- numeric(length(cutpoints)-1)
+      for (bin_number in 1:length(p)) {
+
+        x <- integrate(density_fn, cutpoints[bin_number], cutpoints[bin_number+1],
+                       mu = theta[c("mu.d","mu.g")],
+                       sigma = theta[c("sigma","sigma")],
+                       nu = theta[c("nu","nu")],
+                       weights = weights
+                       )
+        p[bin_number] <- x$value
+      }
+
+      data$predicted_p[index_vector] <- p
+    }
+
+    condition_index <- data$strength==strength
+    bin_counts <- data$bin_counts[condition_index]
+    log_likelihood <- log_likelihood + dmultinom(x = bin_counts, size = sum(bin_counts),
+                                                 prob = data$predicted_p[condition_index],
+                                                 log = TRUE)
+  }
+
+  return(-log_likelihood)
+}
+```
+
+```{r load_data}
+load(file.path(root_dir, "data", "SvDPRec.Rdata"))
+test <- select(test, -list)
+```
+
+
+```{r observed_RT_choice_data}
+speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
+  filter(speeded_RT > 200) %>%
+  mutate(speeded_RT = speeded_RT/1000) %>%
+  group_by(subject, strength, speeded_correct) %>%
+  summarise(quintiles = list(
+              data.frame(quantile = c("10%", "30%", "50%", "70%", "90%", "100%"),
+                         value = quantile(speeded_RT, c(.1, .3, .5, .7, .9, 1)),
+                         bin_counts = floor(n() * c(.1, .2, .2, .2, .2, .1))
+                         )
+              )) %>%
+  ungroup() %>%
+  unnest()
+```
+
+```{r fit, cache=TRUE, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions")}
+DR_fits <- foreach(sub = split(speeded_RT_choice_quantiles,
+                               speeded_RT_choice_quantiles$subject)
+                   ) %do% {
+    fit <- optimx(par = c("DO_L"=0.01, "FD_L"=0.01, "DO_W"=0.01, "FD_W"=0.01,
+                          "DO_S"=0.01, "FD_S"=0.01, "b"= .5,
+                          "mu.d" = .5, "mu.g" = .75, "sigma" = .25, "nu" = .25
+                          ),
+                  fn = DR_obj,
+                  method = "nlminb",
+                  itnmax = 3000,
+                  lower = c(-Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, 0.01, 0.01, .01, .01),
+                  upper = c( Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf, 2,    2,    .5,  .5),
+                  control = list(kkt=FALSE),
+                  data = sub)
+
+    fit$subject <- sub$subject[1]
+    fit
+  }
+
+```
+
+```{r predictions, cache=TRUE, dependson="fit"}
+estimated_parameters <- bind_rows(DR_fits)
+
+predicted_probabilities <- Map(DR_predictions,
+                               lapply(DR_fits, function(x) unlist(x[1:11])),
+                               split(speeded_RT_choice_quantiles,
+                                     speeded_RT_choice_quantiles$subject)
+                               ) %>%
+  bind_rows() %>%
+  group_by(subject, strength, speeded_correct) %>%
+  mutate(observed_p = bin_counts/sum(bin_counts)) %>%
+  group_by(subject, strength) %>%
+  mutate(observed_p = observed_p*c(rep(sum(bin_counts[!speeded_correct])/sum(bin_counts), 6),
+                                   rep(sum(bin_counts[speeded_correct])/sum(bin_counts), 6))
+         ) %>%
+  ungroup() %>%
+  mutate(strength = factor(strength, levels = c("L","W","S")))
+
+predicted_acc <- group_by(predicted_probabilities,
+                          subject, strength, speeded_correct) %>%
+  summarise_at(c("observed_p","predicted_p"), sum) %>%
+  ungroup() %>%
+  gather("type", "p", observed_p, predicted_p) %>%
+  mutate(type = sub("_p", "", type)) %>%
+  arrange(subject, strength, speeded_correct)
+  
+
+predicted_quantiles <- Map(DR_quantiles,
+                           lapply(DR_fits, function(x) unlist(x[1:11])),
+                           split(speeded_RT_choice_quantiles,
+                                 speeded_RT_choice_quantiles$subject)
+                           ) %>%
+  bind_rows() %>%
+  select(-bin_counts) %>%
+  rename(observed=value) %>%
+  gather("type", "value", observed, predicted_qValue) %>%
+  mutate(type = sub("_.", "", type),
+         type = sub("Value", "", type, fixed=TRUE),
+         strength = factor(strength, levels = c("L","W","S")))
+```
+
+```{r 2HT, cache=TRUE}
+twoHT_params <- read.csv("2HT_detect_params.csv") %>%
+  select(subject, dNew.L = DN, dOld.W = DO_W, dOld.S = DO_S) %>%
+  split(., .$subject)
+
+DR_2HT_fits <- foreach(sub = split(speeded_RT_choice_quantiles,
+                               speeded_RT_choice_quantiles$subject)
+                   ) %do% {
+    fit <- optimx(par = c("gOld"=.5,
+                          "mu.d" = .5, "mu.g" = .75,
+                          "sigma" = .25, "nu" = .25
+                          ),
+                  fn = DR_obj,
+                  method = "nlminb",
+                  itnmax = 3000,
+                  lower = c(.01, .01, .01, .01, .01, .01, .01, .01),
+                  upper = c(1,   1,   1,   1,   2,   2,   .5,  .5),
+                  control = list(kkt=FALSE),
+                  data = sub,
+                  fixed = unlist(twoHT_params[[sub$subject[1]]])[2:4])
+
+    fit$subject <- sub$subject[1]
+    fit <- cbind(fit, twoHT_params[[sub$subject[1]]][2:4])
+  }
+
+```
+
+```{r, warning=FALSE}
+detect_fixed_params <- bind_rows(DR_2HT_fits) %>%
+  mutate(subject = as.character(subject))
+```
+
+```{r g2}
+null_deviance <- predicted_probabilities %>%
+  select(subject, strength, bin_counts, observed_p) %>%
+  group_by(subject, strength) %>%
+  summarise(LL = dmultinom(bin_counts, sum(bin_counts), observed_p, log=TRUE)) %>%
+  group_by(subject) %>%
+  summarise(null_deviance = -2*sum(LL))
+
+estimated_parameters <- left_join(bind_rows(detect_free = estimated_parameters,
+                                            detect_fixed = detect_fixed_params,
+                                            .id="model_type"),
+                                  null_deviance,
+                                  by = "subject") %>%
+  
+  mutate(G2 = (2*value) - null_deviance,
+         p = pchisq(G2, df = 28, lower.tail = FALSE))
+```
+
+```{r plots, fig.width=9, fig.align="center", results="asis"}
+ggplot(filter(predicted_acc, speeded_correct),
+       aes(x=strength, y=p, color=type)) +
+  geom_point(size=2) +
+  facet_wrap(~subject, labeller = label_both) +
+  scale_y_continuous("Accuracy") +
+  scale_x_discrete(labels = c("Lure", "Weak", "Strong")) +
+  scale_color_discrete(labels=c("Obs.", "Two LT Race")) +
+  theme(legend.position = c(.75, .10))
+
+formatted_names <- c("Model",
+                     "D<sub>L</sub>", "D<sub>W</sub>", "D<sub>S</sub>", "G<sub>old</sub>",
+                     "\u03BC<sub>D</sub>", "\u03BC<sub>G</sub>", "&sigma;", "τ",
+                     "-LL", "G<sup>2</sup>", "p(X<sup>2</sup><sub>28</sub>)")
+
+for (s in unique(speeded_RT_choice_quantiles$subject)) {
+  
+  cat(sprintf("<h3>Subject %s</h3>", s))
+  
+  subject_params <- filter(estimated_parameters, subject == s)
+  kable(subject_params %>%
+          select(model_type, dNew.L, dOld.W, dOld.S, gOld, mu.d, mu.g, sigma, nu, value, G2, p)  %>%
+          mutate(dNew.L = cell_spec(round(dNew.L,3), background=c("#ffffff", "#ff4c4c")),
+                 dOld.W = cell_spec(round(dOld.W,3), background=c("#ffffff", "#ff4c4c")),
+                 dOld.S = cell_spec(round(dOld.S,3), background=c("#ffffff", "#ff4c4c"))),
+        digits = 3,
+        col.names = formatted_names,
+        escape = FALSE) %>%
+    kableExtra::kable_styling(full_width = FALSE) %>%
+    print()
+  
+  subject_params <- arrange(subject_params, G2)
+  model_diff <- diff(subject_params$G2)
+  p <- pchisq(model_diff, 3, lower.tail = FALSE)
+  
+  cat(sprintf("<p><b>Model Difference:</b> %s - %s = %.3f, p(X<sup>2</sup>) = %.3f",
+              subject_params$model_type[2], subject_params$model_type[1],
+              model_diff, p)
+      )
+  cat("<h4>Detect Parameters Free Model</h4>")
+  
+  acc_plot <-
+    ggplot(filter(predicted_acc, subject == s, speeded_correct),
+          aes(x=strength, y=p, shape=type, color=strength)) +
+    geom_point(size=2,stroke=2) +
+    scale_shape_manual("",
+                       values = c(16,4),
+                       breaks = c("observed","predicted")
+                       ) +
+    scale_color_discrete(labels = c("L" = "Lure",
+                                    "W" = "Weak\nTarget",
+                                    "S" = "Strong\nTarget")
+                         ) +
+    scale_y_continuous("Percent Correct", limits = c(0, 1)) +
+    scale_x_discrete(labels = c("L" = "Lure",
+                                "W" = "Weak\nTarget",
+                                "S" = "Strong\nTarget"),
+                     expand = c(0, .2)) +
+    theme(legend.key.height = unit(9, 'mm'))
+  
+  quantile_plot <- 
+    ggplot(filter(predicted_quantiles, subject == s, quantile != "100%"),
+           aes(x=quantile, y=value, shape=type, color=strength)) +
+    geom_point(size=1.5) +
+    geom_line(aes(group=type)) +
+    facet_grid(speeded_correct ~ strength,
+               labeller = labeller(speeded_correct = as_labeller(
+                                    c("TRUE" = "Correct",
+                                      "FALSE" = "Error")
+                                    ),
+                                    strength = as_labeller(
+                                      c("L" = "Lure",
+                                        "S" = "Strong Target",
+                                        "W" = "Weak Target")
+                                    )
+                                   )
+               ) +
+    scale_shape_manual(values=c(16,4),
+                   breaks=c("observed","predicted")
+                   ) +
+    scale_y_continuous("RT Quantile Value (s.)") +
+    guides(color=FALSE, shape=FALSE)
+  
+  gridExtra::grid.arrange(acc_plot, quantile_plot, nrow=1,
+                          widths=c(.35, .65))
+}
+```
+
