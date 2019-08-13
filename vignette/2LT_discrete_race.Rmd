@@ -150,9 +150,9 @@ DR_predictions <- function(theta, data) {
 DR_quantiles <- function(theta, data) {
   
   theta<- parameter_scaling(theta)
-  O_DN <- abs(pmin(theta['b'], 0))
-  O_FD <- pmax(pmin(1-theta['b'], 1), 0)
-  O_DO <-  2 - pmax(theta['b'], 1)
+  O_DN <- unname(abs(pmin(theta['b'], 0)))
+  O_FD <- unname(pmax(pmin(1-theta['b'], 1), 0))
+  O_DO <- unname(2 - pmax(theta['b'], 1))
   
   data$predicted_qValue <- numeric(nrow(data))
 
@@ -161,34 +161,45 @@ DR_quantiles <- function(theta, data) {
     condition_index <- data$strength==strength
     
     if (strength == "L") {
-      weights <- c(theta[endsWith(names(theta), strength)], 1-O_DN, 1-O_FD, 1-O_DO)
+      weights <- c(theta[endsWith(names(theta), strength)],
+                   "GC_DN" = 1-O_DN, "GC_FD" = 1-O_FD, "GC_DO" = 1-O_DO
+                   )
     } else {
-      weights <- c(theta[endsWith(names(theta), strength)], O_DN, O_FD, O_DO)
+      weights <- c(theta[endsWith(names(theta), strength)],
+                   "GC_DN" = O_DN, "GC_FD" = O_FD, "GC_DO" = O_DO
+                   )
     }
 
-
-    n_samples <- 1000
+    n_samples <- 10000
     n_detect_trials <- rbinom(1, size = n_samples,
-                              p = theta[paste0(c("DN_", "DO_"), strength)]
+                              p = sum(theta[paste0(c("DN_", "DO_"), strength)])
                               )
     detect_RTs <- c(gamlss.dist::rexGAUS(n_detect_trials,
-                                         mu = parameters["mu.d"],
-                                         sigma = parameters["sigma"],
-                                         nu = parameters["nu"]),
+                                         mu = theta["mu.d"],
+                                         sigma = theta["sigma"],
+                                         nu = theta["nu"]),
                     rep(Inf, n_samples - n_detect_trials)
                     )
 
     guess_RTs <- gamlss.dist::rexGAUS(n_samples,
-                                      mu = parameters["mu.g"],
-                                      sigma = parameters["sigma"],
-                                      nu = parameters["nu"]
+                                      mu = theta["mu.g"],
+                                      sigma = theta["sigma"],
+                                      nu = theta["nu"]
                                       )
-
+    # browser()
     RTs <- pmin(detect_RTs, guess_RTs)
     detect_wins <- detect_RTs == RTs
+    N_detect_wins <- sum(detect_wins)
     accuracy <- logical(n_samples)
-    accuracy[detect_wins] <- TRUE
-    accuracy[!detect_wins] <- as.logical(rbinom(sum(!detect_wins), 1, guess_correctly))
+    pCorrect_given_Detect <- weights[paste0("DO_", strength)] * weights["GC_DO"] +
+                             weights[paste0("DN_", strength)] * weights["GC_DN"]
+    accuracy[detect_wins] <- as.logical(rbinom(N_detect_wins,
+                                               1, pCorrect_given_Detect)
+                                        )
+    pCorrect_given_Fail <- weights[paste0("FD_", strength)] * weights["GC_FD"]
+    accuracy[!detect_wins] <- as.logical(rbinom(n_samples - N_detect_wins,
+                                                1, pCorrect_given_Fail)
+                                         )
 
     data$predicted_qValue[data$speeded_correct] <-
       quantile(RTs[accuracy], c(.1, .3, .5, .7, .9, 1))
@@ -306,6 +317,7 @@ DR_fits <- foreach(sub = split(speeded_RT_choice_quantiles,
 ```
 
 ```{r predictions, cache=TRUE, dependson="fit"}
+parameter_names <- colnames(coef(DR_fits[[1]]))
 estimated_parameters <- bind_rows(DR_fits)
 
 predicted_probabilities <- Map(DR_predictions,
@@ -346,38 +358,6 @@ predicted_quantiles <- Map(DR_quantiles,
          strength = factor(strength, levels = c("L","W","S")))
 ```
 
-```{r 2HT, cache=TRUE}
-twoHT_params <- read.csv("2HT_detect_params.csv") %>%
-  select(subject, dNew.L = DN, dOld.W = DO_W, dOld.S = DO_S) %>%
-  split(., .$subject)
-
-DR_2HT_fits <- foreach(sub = split(speeded_RT_choice_quantiles,
-                               speeded_RT_choice_quantiles$subject)
-                   ) %do% {
-    fit <- optimx(par = c("gOld"=.5,
-                          "mu.d" = .5, "mu.g" = .75,
-                          "sigma" = .25, "nu" = .25
-                          ),
-                  fn = DR_obj,
-                  method = "nlminb",
-                  itnmax = 3000,
-                  lower = c(.01, .01, .01, .01, .01, .01, .01, .01),
-                  upper = c(1,   1,   1,   1,   2,   2,   .5,  .5),
-                  control = list(kkt=FALSE),
-                  data = sub,
-                  fixed = unlist(twoHT_params[[sub$subject[1]]])[2:4])
-
-    fit$subject <- sub$subject[1]
-    fit <- cbind(fit, twoHT_params[[sub$subject[1]]][2:4])
-  }
-
-```
-
-```{r, warning=FALSE}
-detect_fixed_params <- bind_rows(DR_2HT_fits) %>%
-  mutate(subject = as.character(subject))
-```
-
 ```{r g2}
 null_deviance <- predicted_probabilities %>%
   select(subject, strength, bin_counts, observed_p) %>%
@@ -386,14 +366,12 @@ null_deviance <- predicted_probabilities %>%
   group_by(subject) %>%
   summarise(null_deviance = -2*sum(LL))
 
-estimated_parameters <- left_join(bind_rows(detect_free = estimated_parameters,
-                                            detect_fixed = detect_fixed_params,
-                                            .id="model_type"),
+estimated_parameters <- left_join(estimated_parameters,
                                   null_deviance,
                                   by = "subject") %>%
-  
   mutate(G2 = (2*value) - null_deviance,
-         p = pchisq(G2, df = 28, lower.tail = FALSE))
+         # p = pchisq(G2, df = 28, lower.tail = FALSE)
+         )
 ```
 
 ```{r plots, fig.width=9, fig.align="center", results="asis"}
@@ -416,26 +394,12 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
   cat(sprintf("<h3>Subject %s</h3>", s))
   
   subject_params <- filter(estimated_parameters, subject == s)
-  kable(subject_params %>%
-          select(model_type, dNew.L, dOld.W, dOld.S, gOld, mu.d, mu.g, sigma, nu, value, G2, p)  %>%
-          mutate(dNew.L = cell_spec(round(dNew.L,3), background=c("#ffffff", "#ff4c4c")),
-                 dOld.W = cell_spec(round(dOld.W,3), background=c("#ffffff", "#ff4c4c")),
-                 dOld.S = cell_spec(round(dOld.S,3), background=c("#ffffff", "#ff4c4c"))),
+  kable(select(subject_params, !!!parameter_names, G2),
         digits = 3,
-        col.names = formatted_names,
+        # col.names = formatted_names,
         escape = FALSE) %>%
     kableExtra::kable_styling(full_width = FALSE) %>%
     print()
-  
-  subject_params <- arrange(subject_params, G2)
-  model_diff <- diff(subject_params$G2)
-  p <- pchisq(model_diff, 3, lower.tail = FALSE)
-  
-  cat(sprintf("<p><b>Model Difference:</b> %s - %s = %.3f, p(X<sup>2</sup>) = %.3f",
-              subject_params$model_type[2], subject_params$model_type[1],
-              model_diff, p)
-      )
-  cat("<h4>Detect Parameters Free Model</h4>")
   
   acc_plot <-
     ggplot(filter(predicted_acc, subject == s, speeded_correct),
