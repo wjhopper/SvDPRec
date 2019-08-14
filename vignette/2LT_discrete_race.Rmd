@@ -12,14 +12,14 @@ editor_options:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
-# library(gamlss)
+library(gamlss.dist)
 library(rprojroot)
 library(kableExtra)
 library(optimx)
 library(foreach)
-library(dplyr)
 library(tidyr)
 library(ggplot2)
+library(dplyr)
 root_dir <- rprojroot::is_rstudio_project$find_file()
 ```
 
@@ -278,7 +278,6 @@ load(file.path(root_dir, "data", "SvDPRec.Rdata"))
 test <- select(test, -list)
 ```
 
-
 ```{r observed_RT_choice_data}
 speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
   filter(speeded_RT > 200) %>%
@@ -295,7 +294,7 @@ speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
 ```
 
 ```{r fit, cache=TRUE, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions")}
-DR_fits <- foreach(sub = split(speeded_RT_choice_quantiles,
+twoLT_DR_fits_optimx <- foreach(sub = split(speeded_RT_choice_quantiles,
                                speeded_RT_choice_quantiles$subject)
                    ) %do% {
     fit <- optimx(par = c("DO_L"=0.01, "FD_L"=0.01, "DO_W"=0.01, "FD_W"=0.01,
@@ -314,38 +313,81 @@ DR_fits <- foreach(sub = split(speeded_RT_choice_quantiles,
     fit
   }
 
+twoLT_DR_fits <- bind_rows(twoLT_DR_fits_optimx) 
+```
+
+```{r parameters}
+parameter_names <- colnames(coef(twoLT_DR_fits_optimx[[1]]))
+
+twoLT_DR_params_subject <- dplyr::select(twoLT_DR_fits, subject, !!!parameter_names)
+
+twoLT_DR_params_scaled_subject <- rowwise(twoLT_DR_params_subject) %>%
+  do({
+    data.frame(subject = .$subject,
+               as.list(parameter_scaling(unlist(.[parameter_names]))),
+               stringsAsFactors = FALSE
+               )
+    }) %>%
+  ungroup() %>%
+  dplyr::select(!!!parameter_names)
+
+twoLT_DR_params_avg <- as.data.frame(t(colMeans(twoLT_DR_params_subject[parameter_names])))
+twoLT_DR_params_scaled_avg <- as.data.frame(t(colMeans(twoLT_DR_params_scaled_subject[parameter_names])))
+```
+
+```{r GOF}
+null_LL <- speeded_RT_choice_quantiles %>%
+  group_by(subject, strength, speeded_correct) %>%
+  mutate(p = bin_counts/sum(bin_counts)) %>%
+  group_by(subject, strength) %>%
+  mutate(marginal_p = p*c(rep(sum(bin_counts[!speeded_correct])/sum(bin_counts), 6),
+                          rep(sum(bin_counts[speeded_correct])/sum(bin_counts), 6))
+         ) %>%
+  summarise(LL = dmultinom(bin_counts, sum(bin_counts), marginal_p, log=TRUE)) %>%
+  group_by(subject) %>%
+  summarise(null_LL = sum(LL))
+
+twoLT_DR_GOF_subject <- dplyr::select(.data=twoLT_DR_fits,
+                                      subject, value, fevals, gevals, niter, convcode) %>%
+  mutate(LL = -value) %>%
+  left_join(x = .,  y = null_LL,
+            by = "subject") %>%
+  mutate(G2 = -2*(LL - null_LL),
+         df = 33 - length(parameter_names),
+         p = pchisq(G2, df = df, lower.tail = FALSE)
+         ) %>%
+  dplyr::select(subject, LL, null_LL, G2, df, p, fevals, gevals, niter, convcode)
+
+twoLT_DR_GOF_sum <- as.data.frame(t(colSums(twoLT_DR_GOF_subject[c("LL", "null_LL", "G2", "df")]))) %>%
+  mutate(p = pchisq(G2, df = df, lower.tail = FALSE))
 ```
 
 ```{r predictions, cache=TRUE, dependson="fit"}
-parameter_names <- colnames(coef(DR_fits[[1]]))
-estimated_parameters <- bind_rows(DR_fits)
-
 predicted_probabilities <- Map(DR_predictions,
-                               lapply(DR_fits, function(x) unlist(x[1:11])),
+                               lapply(twoLT_DR_fits_optimx, function(x) unlist(x[1:11])),
                                split(speeded_RT_choice_quantiles,
                                      speeded_RT_choice_quantiles$subject)
                                ) %>%
-  bind_rows() %>%
-  group_by(subject, strength, speeded_correct) %>%
-  mutate(observed_p = bin_counts/sum(bin_counts)) %>%
+  bind_rows()
+
+predicted_acc <- filter(predicted_probabilities, speeded_correct) %>%
   group_by(subject, strength) %>%
-  mutate(observed_p = observed_p*c(rep(sum(bin_counts[!speeded_correct])/sum(bin_counts), 6),
-                                   rep(sum(bin_counts[speeded_correct])/sum(bin_counts), 6))
-         ) %>%
-  ungroup() %>%
+  summarise(predicted_acc = sum(predicted_p)) %>%
+  ungroup()
+
+observed_acc <- group_by(speeded_RT_choice_quantiles,
+                         subject, strength) %>%
+  summarise(acc = sum(bin_counts[speeded_correct])/sum(bin_counts)) %>%
+  ungroup()
+
+accuracy <- bind_rows(twoLT = rename(predicted_acc, acc = predicted_acc),
+                      obs = observed_acc,
+                      .id = "type"
+                      ) %>%
   mutate(strength = factor(strength, levels = c("L","W","S")))
 
-predicted_acc <- group_by(predicted_probabilities,
-                          subject, strength, speeded_correct) %>%
-  summarise_at(c("observed_p","predicted_p"), sum) %>%
-  ungroup() %>%
-  gather("type", "p", observed_p, predicted_p) %>%
-  mutate(type = sub("_p", "", type)) %>%
-  arrange(subject, strength, speeded_correct)
-  
-
 predicted_quantiles <- Map(DR_quantiles,
-                           lapply(DR_fits, function(x) unlist(x[1:11])),
+                           lapply(twoLT_DR_fits_optimx, function(x) unlist(x[1:11])),
                            split(speeded_RT_choice_quantiles,
                                  speeded_RT_choice_quantiles$subject)
                            ) %>%
@@ -358,43 +400,46 @@ predicted_quantiles <- Map(DR_quantiles,
          strength = factor(strength, levels = c("L","W","S")))
 ```
 
-```{r g2}
-null_deviance <- predicted_probabilities %>%
-  select(subject, strength, bin_counts, observed_p) %>%
-  group_by(subject, strength) %>%
-  summarise(LL = dmultinom(bin_counts, sum(bin_counts), observed_p, log=TRUE)) %>%
-  group_by(subject) %>%
-  summarise(null_deviance = -2*sum(LL))
+```{r save_outputs, eval=isTRUE(getOption('knitr.in.progress'))}
+files_dir <- paste0(tools::file_path_sans_ext(knitr::current_input()),
+                    "_files"
+                    )
+if (!dir.exists(files_dir)) {
+  dir.create("files_dir")
+}
 
-estimated_parameters <- left_join(estimated_parameters,
-                                  null_deviance,
-                                  by = "subject") %>%
-  mutate(G2 = (2*value) - null_deviance,
-         # p = pchisq(G2, df = 28, lower.tail = FALSE)
-         )
+write.csv(twoLT_DR_params_subject,
+          file = file.path(files_dir, "parameters.csv"),
+          row.names = FALSE
+          )
+
+write.csv(twoLT_DR_params_scale_subject,
+          file = file.path(files_dir, "scaled_parameters.csv"),
+          row.names = FALSE
+          )
 ```
 
 ```{r plots, fig.width=9, fig.align="center", results="asis"}
-ggplot(filter(predicted_acc, speeded_correct),
-       aes(x=strength, y=p, color=type)) +
-  geom_point(size=2) +
-  facet_wrap(~subject, labeller = label_both) +
-  scale_y_continuous("Accuracy") +
-  scale_x_discrete(labels = c("Lure", "Weak", "Strong")) +
-  scale_color_discrete(labels=c("Obs.", "Two LT Race")) +
-  theme(legend.position = c(.75, .10))
+# ggplot(filter(predicted_acc, speeded_correct),
+#        aes(x=strength, y=p, color=type)) +
+#   geom_point(size=2) +
+#   facet_wrap(~subject, labeller = label_both) +
+#   scale_y_continuous("Accuracy") +
+#   scale_x_discrete(labels = c("Lure", "Weak", "Strong")) +
+#   scale_color_discrete(labels=c("Obs.", "Two LT Race")) +
+#   theme(legend.position = c(.75, .10))
 
-formatted_names <- c("Model",
-                     "D<sub>L</sub>", "D<sub>W</sub>", "D<sub>S</sub>", "G<sub>old</sub>",
-                     "\u03BC<sub>D</sub>", "\u03BC<sub>G</sub>", "&sigma;", "τ",
-                     "-LL", "G<sup>2</sup>", "p(X<sup>2</sup><sub>28</sub>)")
+# formatted_names <- c("Model",
+#                      "D<sub>L</sub>", "D<sub>W</sub>", "D<sub>S</sub>", "G<sub>old</sub>",
+#                      "\u03BC<sub>D</sub>", "\u03BC<sub>G</sub>", "&sigma;", "τ",
+                     # "-LL", "G<sup>2</sup>", "p(X<sup>2</sup><sub>28</sub>)")
 
 for (s in unique(speeded_RT_choice_quantiles$subject)) {
   
   cat(sprintf("<h3>Subject %s</h3>", s))
   
-  subject_params <- filter(estimated_parameters, subject == s)
-  kable(select(subject_params, !!!parameter_names, G2),
+  subject_params <- filter(twoLT_DR_params_scaled_subject, subject == s)
+  kable(filter(twoLT_DR_params_scaled_subject, subject == s),
         digits = 3,
         # col.names = formatted_names,
         escape = FALSE) %>%
@@ -402,7 +447,7 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
     print()
   
   acc_plot <-
-    ggplot(filter(predicted_acc, subject == s, speeded_correct),
+    ggplot(filter(accuracy, subject == s),
           aes(x=strength, y=p, shape=type, color=strength)) +
     geom_point(size=2,stroke=2) +
     scale_shape_manual("",
