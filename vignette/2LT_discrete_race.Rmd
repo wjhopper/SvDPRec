@@ -1,5 +1,5 @@
 ---
-title: "Discrete Race Model Fits"
+title: "Discrete Race Model, Two Low-Threshold Architecture"
 author: "William Hopper"
 date: "`r format(Sys.Date(), '%b %d, %Y')`"
 output:
@@ -22,6 +22,13 @@ library(ggplot2)
 library(dplyr)
 root_dir <- rprojroot::is_rstudio_project$find_file()
 ```
+
+```{css css}
+.main-container{
+  max-width: 1200px;
+}
+```
+
 
 ```{r discrete_race_exgaussians, cache=TRUE}
 ## mu, sigma & nu should be vectors of length 2
@@ -329,7 +336,7 @@ twoLT_DR_params_scaled_subject <- rowwise(twoLT_DR_params_subject) %>%
                )
     }) %>%
   ungroup() %>%
-  dplyr::select(!!!parameter_names)
+  dplyr::select(subject, !!!parameter_names)
 
 twoLT_DR_params_avg <- as.data.frame(t(colMeans(twoLT_DR_params_subject[parameter_names])))
 twoLT_DR_params_scaled_avg <- as.data.frame(t(colMeans(twoLT_DR_params_scaled_subject[parameter_names])))
@@ -405,65 +412,116 @@ files_dir <- paste0(tools::file_path_sans_ext(knitr::current_input()),
                     "_files"
                     )
 if (!dir.exists(files_dir)) {
-  dir.create("files_dir")
+  dir.create(files_dir)
 }
 
 write.csv(twoLT_DR_params_subject,
           file = file.path(files_dir, "parameters.csv"),
           row.names = FALSE
           )
-
-write.csv(twoLT_DR_params_scale_subject,
+write.csv(twoLT_DR_params_scaled_subject,
           file = file.path(files_dir, "scaled_parameters.csv"),
+          row.names = FALSE
+          )
+write.csv(twoLT_DR_params_subject,
+          file = file.path(files_dir, "parameters.csv"),
+          row.names = FALSE
+          )
+write.csv(twoLT_DR_GOF_subject,
+          file = file.path(files_dir, "GOF.csv"),
           row.names = FALSE
           )
 ```
 
-```{r plots, fig.width=9, fig.align="center", results="asis"}
-# ggplot(filter(predicted_acc, speeded_correct),
-#        aes(x=strength, y=p, color=type)) +
-#   geom_point(size=2) +
-#   facet_wrap(~subject, labeller = label_both) +
-#   scale_y_continuous("Accuracy") +
-#   scale_x_discrete(labels = c("Lure", "Weak", "Strong")) +
-#   scale_color_discrete(labels=c("Obs.", "Two LT Race")) +
-#   theme(legend.position = c(.75, .10))
 
-# formatted_names <- c("Model",
-#                      "D<sub>L</sub>", "D<sub>W</sub>", "D<sub>S</sub>", "G<sub>old</sub>",
-#                      "\u03BC<sub>D</sub>", "\u03BC<sub>G</sub>", "&sigma;", "τ",
-                     # "-LL", "G<sup>2</sup>", "p(X<sup>2</sup><sub>28</sub>)")
+```{r param_summary_tables}
+formatted_names_map <- c(subject="Subject", DO_L="DO<sub>L</sub>", FD_L="FD<sub>L</sub>", 
+                         DO_W="DO<sub>W</sub>", FD_W="FD<sub>W</sub>", DO_S="DO<sub>S</sub>",
+                         FD_S="FD<sub>S</sub>", b="b", mu.d="μ<sub>D</sub>", mu.g="μ<sub>G</sub>",
+                         sigma="\U03C3", nu="v", G2="G<sup>2</sup>", LL="LL", null_LL="Null LL",
+                         df="df", p="p(X<sup>2</sup>)",fevals="fevals", gevals="gevals",
+                         niter="niter", convcode="convcode")
+#"p(X<sup>2</sup><sub>28</sub>)")
+
+left_join(twoLT_DR_params_scaled_subject,
+          select(twoLT_DR_GOF_subject, subject, G2),
+          by="subject"
+          ) %>%
+  kable(digits=3,
+        col.names = formatted_names_map[names(.)],
+        escape=FALSE) %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::column_spec(1, bold=TRUE)
+```
+
+```{r download_links, results="asis"}
+cat("<ul><li>",
+    paste0('<a  href="', file.path(files_dir, "scaled_parameters.csv"),
+           '">Download Scaled Parameters</a>'
+           ),
+    "</li><li>",
+    paste0('<a href="', file.path(files_dir, "parameters.csv"),
+           '">Download Raw Parameters</a>'
+           ),
+    "</li><li>",
+    paste0('<a href="',
+           file.path(files_dir, "GOF.csv"),
+           '">Download GOF Statistics</a>'
+       ),
+    "</li></ul>",
+    sep=""
+    )
+```
+
+
+## Individual Subjects
+```{r plots, cache=TRUE, fig.width=8.5, fig.align="center", results="asis"}
 
 for (s in unique(speeded_RT_choice_quantiles$subject)) {
   
   cat(sprintf("<h3>Subject %s</h3>", s))
   
-  subject_params <- filter(twoLT_DR_params_scaled_subject, subject == s)
-  kable(filter(twoLT_DR_params_scaled_subject, subject == s),
+  subject_params <- filter(twoLT_DR_params_scaled_subject, subject == s)[,-1]
+  subject_GOF <- filter(twoLT_DR_GOF_subject, subject == s)[,-1]
+
+  kable(data.frame(Parameter=formatted_names_map[colnames(subject_params)],
+                   Value=unlist(subject_params)
+                   ),
         digits = 3,
-        # col.names = formatted_names,
+        row.names=FALSE,
         escape = FALSE) %>%
-    kableExtra::kable_styling(full_width = FALSE) %>%
+    kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
     print()
   
+    kable(data.frame(Statistic=formatted_names_map[colnames(subject_GOF)],
+                     Value=unlist(subject_GOF)
+                     ),
+        digits = c(2,2,2,0,3,0,0,0,0),
+        row.names=FALSE,
+        escape = FALSE) %>%
+    kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+    print()
+
   acc_plot <-
     ggplot(filter(accuracy, subject == s),
-          aes(x=strength, y=p, shape=type, color=strength)) +
-    geom_point(size=2,stroke=2) +
+          aes(y=acc, shape=type, color=strength, group=strength)) +
+    geom_point(aes(x="1"), size=2, stroke=2,
+               position = position_dodge(width=.35)) +
     scale_shape_manual("",
                        values = c(16,4),
                        breaks = c("observed","predicted")
                        ) +
-    scale_color_discrete(labels = c("L" = "Lure",
+    scale_color_discrete("Srength",
+                         labels = c("L" = "Lure",
                                     "W" = "Weak\nTarget",
                                     "S" = "Strong\nTarget")
                          ) +
     scale_y_continuous("Percent Correct", limits = c(0, 1)) +
-    scale_x_discrete(labels = c("L" = "Lure",
-                                "W" = "Weak\nTarget",
-                                "S" = "Strong\nTarget"),
-                     expand = c(0, .2)) +
-    theme(legend.key.height = unit(9, 'mm'))
+    scale_x_discrete("", labels = "", expand = c(0, .2)) +
+    theme(legend.key.height = unit(9, 'mm'),
+          axis.title.x = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.text.x = element_blank())
   
   quantile_plot <- 
     ggplot(filter(predicted_quantiles, subject == s, quantile != "100%"),
@@ -489,7 +547,7 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
     guides(color=FALSE, shape=FALSE)
   
   gridExtra::grid.arrange(acc_plot, quantile_plot, nrow=1,
-                          widths=c(.35, .65))
+                          widths=c(.27, .73))
 }
 ```
 
