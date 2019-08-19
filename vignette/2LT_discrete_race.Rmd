@@ -94,23 +94,29 @@ ilogit <- function(x, max=1) {
 
 parameter_scaling <- function(theta) {
 
-  p <- numeric(length(theta) + 3)
-  names(p) <- c(names(theta), c("DN_L", "DN_W", "DN_S"))
-  p[c("DO_L", "FD_L", "DN_L")] <- softmax(c(theta[c("DO_L", "FD_L")], 0))
-  p[c("DO_W", "FD_W", "DN_W")] <- softmax(c(theta[c("DO_W", "FD_W")], 0))
-  p[c("DO_S", "FD_S", "DN_S")] <- softmax(c(theta[c("DO_S", "FD_S")], 0))
-  p["b"] <- -1 + ilogit(x = theta["b"], max=3)
-  p[c("mu.d", "mu.g", "sigma", "nu")] <- theta[c("mu.d", "mu.g", "sigma", "nu")]
-  return(p)
+  # Add new vector elements for the parameters that are computed based on existing ones.
+  theta <- c(theta,
+             "DN_L"=NA_real_, "DN_W"=NA_real_, "DN_S"=NA_real_,
+             "RO_DN"=NA_real_, "RO_FD"=NA_real_, "RO_DO"=NA_real_
+             )
+
+  # Convert detect paramters from log-odds scale to probability scale
+  theta[c("DO_L", "FD_L", "DN_L")] <- softmax(c(theta[c("DO_L", "FD_L")], 0))
+  theta[c("DO_W", "FD_W", "DN_W")] <- softmax(c(theta[c("DO_W", "FD_W")], 0))
+  theta[c("DO_S", "FD_S", "DN_S")] <- softmax(c(theta[c("DO_S", "FD_S")], 0))
+
+  # Compute response probabilities from each detect state based on bias parameter
+  theta["b"] <- -1 + ilogit(x = theta["b"], max=3)
+  theta["RO_DN"] <- abs(pmin(theta["b"], 0))
+  theta["RO_FD"] <- pmax(pmin(theta["b"], 1), 0)
+  theta["RO_DO"] <-  2 - pmax(theta["b"], 1)
+  return(theta)
 }
 
 DR_predictions <- function(theta, data) {
 
-  theta<- parameter_scaling(theta)
-  O_DN <- abs(pmin(theta['b'], 0))
-  O_FD <- pmax(pmin(1-theta['b'], 1), 0)
-  O_DO <-  2 - pmax(theta['b'], 1)
-  
+  theta <- parameter_scaling(theta)
+
   data$predicted_p <- numeric(nrow(data))
 
   for (strength in unique(data$strength)) {
@@ -118,9 +124,13 @@ DR_predictions <- function(theta, data) {
     condition_index <- data$strength==strength
     
     if (strength == "L") {
-      weights <- c(theta[endsWith(names(theta), strength)], 1-O_DN, 1-O_FD, 1-O_DO)
+      weights <- c(theta[endsWith(names(theta), strength)],
+                   1-theta[c("RO_DN", "RO_FD", "RO_DO")]
+                   )
     } else {
-      weights <- c(theta[endsWith(names(theta), strength)], O_DN, O_FD, O_DO)
+      weights <- c(theta[endsWith(names(theta), strength)],
+                   theta[c("RO_DN", "RO_FD", "RO_DO")]
+                   )
     }
 
     for (acc in unique(data$speeded_correct)) {
@@ -156,10 +166,7 @@ DR_predictions <- function(theta, data) {
 
 DR_quantiles <- function(theta, data) {
   
-  theta<- parameter_scaling(theta)
-  O_DN <- unname(abs(pmin(theta['b'], 0)))
-  O_FD <- unname(pmax(pmin(1-theta['b'], 1), 0))
-  O_DO <- unname(2 - pmax(theta['b'], 1))
+  theta <- parameter_scaling(theta)
   
   data$predicted_qValue <- numeric(nrow(data))
 
@@ -169,18 +176,19 @@ DR_quantiles <- function(theta, data) {
     
     if (strength == "L") {
       weights <- c(theta[endsWith(names(theta), strength)],
-                   "GC_DN" = 1-O_DN, "GC_FD" = 1-O_FD, "GC_DO" = 1-O_DO
+                   1-theta[c("RO_DN", "RO_FD", "RO_DO")]
                    )
     } else {
       weights <- c(theta[endsWith(names(theta), strength)],
-                   "GC_DN" = O_DN, "GC_FD" = O_FD, "GC_DO" = O_DO
+                   theta[c("RO_DN", "RO_FD", "RO_DO")]
                    )
     }
+    names(weights)[(length(weights)-2):length(weights)] <- c("GC_DN", "GC_FD", "GC_DO")
 
     n_samples <- 10000
-    n_detect_trials <- rbinom(1, size = n_samples,
-                              p = sum(theta[paste0(c("DN_", "DO_"), strength)])
-                              )
+    p_detect <- sum(theta[paste0(c("DN_", "DO_"), strength)])
+    n_detect_trials <- max(1, rbinom(1, size = n_samples, p = p_detect))
+
     detect_RTs <- c(gamlss.dist::rexGAUS(n_detect_trials,
                                          mu = theta["mu.d"],
                                          sigma = theta["sigma"],
@@ -222,11 +230,7 @@ DR_quantiles <- function(theta, data) {
 DR_obj <- function(theta, data, fixed=NULL){
 
   theta <- c(theta, fixed)
-  
-  theta<- parameter_scaling(theta)
-  O_DN <- abs(pmin(theta['b'], 0))
-  O_FD <- pmax(pmin(1-theta['b'], 1), 0)
-  O_DO <-  2 - pmax(theta['b'], 1)
+  theta <- parameter_scaling(theta)
   
   data$predicted_p <- numeric(nrow(data))
   
@@ -237,9 +241,13 @@ DR_obj <- function(theta, data, fixed=NULL){
     condition_index <- data$strength==strength
     
     if (strength == "L") {
-      weights <- c(theta[endsWith(names(theta), strength)], 1-O_DN, 1-O_FD, 1-O_DO)
+      weights <- c(theta[endsWith(names(theta), strength)],
+                   1-theta[c("RO_DN", "RO_FD", "RO_DO")]
+                   )
     } else {
-      weights <- c(theta[endsWith(names(theta), strength)], O_DN, O_FD, O_DO)
+      weights <- c(theta[endsWith(names(theta), strength)],
+                   theta[c("RO_DN", "RO_FD", "RO_DO")]
+                   )
     }
 
     for (acc in unique(data$speeded_correct)) {
@@ -302,8 +310,8 @@ speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
 
 ```{r fit, cache=TRUE, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions")}
 twoLT_DR_fits_optimx <- foreach(sub = split(speeded_RT_choice_quantiles,
-                               speeded_RT_choice_quantiles$subject)
-                   ) %do% {
+                                            speeded_RT_choice_quantiles$subject)
+                                ) %do% {
     fit <- optimx(par = c("DO_L"=0.01, "FD_L"=0.01, "DO_W"=0.01, "FD_W"=0.01,
                           "DO_S"=0.01, "FD_S"=0.01, "b"= .5,
                           "mu.d" = .5, "mu.g" = .75, "sigma" = .25, "nu" = .25
