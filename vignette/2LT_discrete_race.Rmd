@@ -29,7 +29,6 @@ root_dir <- rprojroot::is_rstudio_project$find_file()
 }
 ```
 
-
 ```{r discrete_race_exgaussians, cache=TRUE}
 ## mu, sigma & nu should be vectors of length 2
 ## First element should be parameter for detect distribution
@@ -92,77 +91,68 @@ ilogit <- function(x, max=1) {
   return(max/(1+exp(-x)))
 }
 
+guess_parameter_scaling <- function(b, reverse=FALSE) {
+
+  # Compute response probabilities from each detect state based on bias parameter
+  if (b > 2 || b < -1) {
+    stop("Bias parameter must lie within [-1, 2]")
+  }
+  
+  RO_DN <- abs(pmin(b, 0))
+  RO_FD <- pmax(pmin(1-b, 1), 0)
+  RO_DO <-  2 - pmax(b, 1)
+  theta <- c("RO_DN"=RO_DN, "RO_FD"=RO_FD, "RO_DO"=RO_DO)
+  
+  if (reverse) {
+    theta <- 1-theta
+  }
+  return(theta)
+}
+
+pDR <- function(rt, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
+
+  weights <- c("DO"=DO, "FD"=FD, "DN"=(1-DO-FD),
+               guess_parameter_scaling(b, reverse)
+               )
+
+  p <- numeric(length=length(rt))
+  for (i in 1:length(p)) {
+    
+    if (correct[i]) {
+      density_fn = dcRT
+    } else {
+      density_fn = deRT
+    }
+
+    x <- integrate(density_fn, 0, rt[i],
+                   mu = c(mu.d, mu.g),
+                   sigma = c(sigma, sigma),
+                   nu = c(nu, nu),
+                   weights = weights
+                   )
+    p[i] <- x$value
+  }
+
+  return(p)
+}
+
 parameter_scaling <- function(theta) {
 
+  # Compute response probabilities from each detect state based on bias parameter
+  theta["b"] <- -1 + ilogit(x = theta["b"], max=3)
+  bias_params <- guess_parameter_scaling(theta["b"])
+  
   # Add new vector elements for the parameters that are computed based on existing ones.
-  theta <- c(theta,
-             "DN_L"=NA_real_, "DN_W"=NA_real_, "DN_S"=NA_real_,
-             "RO_DN"=NA_real_, "RO_FD"=NA_real_, "RO_DO"=NA_real_
-             )
+  theta <- c(theta, bias_params, "DN_L"=NA_real_, "DN_W"=NA_real_, "DN_S"=NA_real_)
 
   # Convert detect paramters from log-odds scale to probability scale
   theta[c("DO_L", "FD_L", "DN_L")] <- softmax(c(theta[c("DO_L", "FD_L")], 0))
   theta[c("DO_W", "FD_W", "DN_W")] <- softmax(c(theta[c("DO_W", "FD_W")], 0))
   theta[c("DO_S", "FD_S", "DN_S")] <- softmax(c(theta[c("DO_S", "FD_S")], 0))
 
-  # Compute response probabilities from each detect state based on bias parameter
-  theta["b"] <- -1 + ilogit(x = theta["b"], max=3)
-  theta["RO_DN"] <- abs(pmin(theta["b"], 0))
-  theta["RO_FD"] <- pmax(pmin(theta["b"], 1), 0)
-  theta["RO_DO"] <-  2 - pmax(theta["b"], 1)
   return(theta)
 }
 
-DR_predictions <- function(theta, data) {
-
-  theta <- parameter_scaling(theta)
-
-  data$predicted_p <- numeric(nrow(data))
-
-  for (strength in unique(data$strength)) {
-
-    condition_index <- data$strength==strength
-    
-    if (strength == "L") {
-      weights <- c(theta[endsWith(names(theta), strength)],
-                   1-theta[c("RO_DN", "RO_FD", "RO_DO")]
-                   )
-    } else {
-      weights <- c(theta[endsWith(names(theta), strength)],
-                   theta[c("RO_DN", "RO_FD", "RO_DO")]
-                   )
-    }
-
-    for (acc in unique(data$speeded_correct)) {
-
-      if (acc) {
-        density_fn = dcRT
-      } else {
-        density_fn = deRT
-      }
-
-      index_vector <- condition_index & data$speeded_correct == acc 
-      cutpoints <- c(0, data$value[index_vector])
-      cutpoints[length(cutpoints)] <- Inf
-
-      p <- numeric(length(cutpoints)-1)
-      for (bin_number in 1:length(p)) {
-
-        x <- integrate(density_fn, cutpoints[bin_number], cutpoints[bin_number+1],
-                       mu = theta[c("mu.d","mu.g")],
-                       sigma = theta[c("sigma","sigma")],
-                       nu = theta[c("nu","nu")],
-                       weights = weights
-                       )
-        p[bin_number] <- x$value
-      }
-
-      data$predicted_p[index_vector] <- p
-    }
-  }
-
-  return(data)
-}
 
 DR_quantiles <- function(theta, data) {
   
@@ -176,11 +166,11 @@ DR_quantiles <- function(theta, data) {
     
     if (strength == "L") {
       weights <- c(theta[endsWith(names(theta), strength)],
-                   1-theta[c("RO_DN", "RO_FD", "RO_DO")]
+                   1-theta[c("RO_DN.b", "RO_FD.b", "RO_DO.b")]
                    )
     } else {
       weights <- c(theta[endsWith(names(theta), strength)],
-                   theta[c("RO_DN", "RO_FD", "RO_DO")]
+                   theta[c("RO_DN.b", "RO_FD.b", "RO_DO.b")]
                    )
     }
     names(weights)[(length(weights)-2):length(weights)] <- c("GC_DN", "GC_FD", "GC_DO")
@@ -201,7 +191,7 @@ DR_quantiles <- function(theta, data) {
                                       sigma = theta["sigma"],
                                       nu = theta["nu"]
                                       )
-    # browser()
+
     RTs <- pmin(detect_RTs, guess_RTs)
     detect_wins <- detect_RTs == RTs
     N_detect_wins <- sum(detect_wins)
@@ -227,7 +217,7 @@ DR_quantiles <- function(theta, data) {
 }
 
 
-DR_obj <- function(theta, data, fixed=NULL){
+DR_obj <- function(theta, data, fixed=NULL) {
 
   theta <- c(theta, fixed)
   theta <- parameter_scaling(theta)
@@ -242,11 +232,11 @@ DR_obj <- function(theta, data, fixed=NULL){
     
     if (strength == "L") {
       weights <- c(theta[endsWith(names(theta), strength)],
-                   1-theta[c("RO_DN", "RO_FD", "RO_DO")]
+                   1-theta[c("RO_DN.b", "RO_FD.b", "RO_DO.b")]
                    )
     } else {
       weights <- c(theta[endsWith(names(theta), strength)],
-                   theta[c("RO_DN", "RO_FD", "RO_DO")]
+                   theta[c("RO_DN.b", "RO_FD.b", "RO_DO.b")]
                    )
     }
 
@@ -377,13 +367,41 @@ twoLT_DR_GOF_sum <- as.data.frame(t(colSums(twoLT_DR_GOF_subject[c("LL", "null_L
   mutate(p = pchisq(G2, df = df, lower.tail = FALSE))
 ```
 
+```{r condition_wise_parameters}
+detect_params <-
+  select(twoLT_DR_params_scaled_subject, subject, contains("_")) %>%
+  gather(key="param", value="value", -subject) %>%
+  separate(param, c("param", "strength")) %>%
+  spread(param, value)
+
+strength_wise_params <- left_join(detect_params,
+                                  select(twoLT_DR_params_scaled_subject, -contains("_")),
+                                  by = "subject"
+                                  )
+variables <- setdiff(names(strength_wise_params), c("subject", "strength"))
+tidy_params <- bind_rows(mutate(strength_wise_params, speeded_correct = FALSE),
+                         mutate(strength_wise_params, speeded_correct = TRUE)
+                         ) %>%
+  select(subject, strength, speeded_correct, !!!variables)
+```
+
+
 ```{r predictions, cache=TRUE, dependson="fit"}
-predicted_probabilities <- Map(DR_predictions,
-                               lapply(twoLT_DR_fits_optimx, function(x) unlist(x[1:11])),
-                               split(speeded_RT_choice_quantiles,
-                                     speeded_RT_choice_quantiles$subject)
-                               ) %>%
-  bind_rows()
+
+predicted_probabilities <- left_join(tidy_params,
+                                      select(speeded_RT_choice_quantiles, -bin_counts),
+                                      by = c("subject", "strength", "speeded_correct")
+                                      ) %>%
+  rowwise() %>%
+  mutate(predicted_p = pDR(rt=value, correct=speeded_correct,
+                           DO, FD, b, mu.d, mu.g, sigma, nu,
+                           reverse = strength == "L")
+         ) %>%
+  select(-variables) %>%
+  ungroup() %>%
+  group_by(subject, strength, speeded_correct) %>%
+  mutate(predicted_p = diff(c(0, predicted_p))) %>%
+  ungroup()
 
 predicted_acc <- filter(predicted_probabilities, speeded_correct) %>%
   group_by(subject, strength) %>%
