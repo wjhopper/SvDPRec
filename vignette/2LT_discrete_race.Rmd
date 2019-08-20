@@ -115,7 +115,18 @@ pDR <- function(rt, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
                guess_parameter_scaling(b, reverse)
                )
 
-  p <- numeric(length=length(rt))
+  n_correct <- length(correct)
+  n_rt <-  length(rt)
+  
+  if (n_correct != n_rt) {
+    if (n_correct == 1) {
+      correct <- rep(correct, n_rt)
+    } else {
+      stop("Length of 'correct' argument vector must be 1, or match length of 'rt' argument vector.")
+    }
+  }
+  
+  p <- numeric(length=n_rt)
   for (i in 1:length(p)) {
     
     if (correct[i]) {
@@ -225,49 +236,36 @@ DR_obj <- function(theta, data, fixed=NULL) {
   data$predicted_p <- numeric(nrow(data))
   
   log_likelihood <- 0
-
+  
   for (strength in unique(data$strength)) {
 
     condition_index <- data$strength==strength
+    DO <- theta[paste0("DO_", strength)]
+    FD <- theta[paste0("FD_", strength)]
     
-    if (strength == "L") {
-      weights <- c(theta[endsWith(names(theta), strength)],
-                   1-theta[c("RO_DN.b", "RO_FD.b", "RO_DO.b")]
-                   )
-    } else {
-      weights <- c(theta[endsWith(names(theta), strength)],
-                   theta[c("RO_DN.b", "RO_FD.b", "RO_DO.b")]
-                   )
-    }
-
     for (acc in unique(data$speeded_correct)) {
 
-      if (acc) {
-        density_fn = dcRT
-      } else {
-        density_fn = deRT
-      }
+      index_vector <- condition_index & data$speeded_correct == acc
+      rt_cutpoints <- data$value[index_vector]
+      rt_cutpoints[length(rt_cutpoints)] <- Inf
 
-      index_vector <- condition_index & data$speeded_correct == acc 
-      cutpoints <- c(0, data$value[index_vector])
-      cutpoints[length(cutpoints)] <- Inf
+      
+      p <- pDR(rt = rt_cutpoints, correct = acc,
+               DO = DO, FD = FD,
+               b = theta["b"],
+               mu.d = theta["mu.d"], mu.g=theta["mu.g"],
+               sigma = theta["sigma"], nu=theta["nu"],
+               reverse = strength == "L"
+               )
 
-      p <- numeric(length(cutpoints)-1)
-      for (bin_number in 1:length(p)) {
-
-        x <- integrate(density_fn, cutpoints[bin_number], cutpoints[bin_number+1],
-                       mu = theta[c("mu.d","mu.g")],
-                       sigma = theta[c("sigma","sigma")],
-                       nu = theta[c("nu","nu")],
-                       weights = weights
-                       )
-        p[bin_number] <- x$value
-      }
-
-      data$predicted_p[index_vector] <- p
+      data$predicted_p[index_vector] <- diff(c(0, p))
     }
 
-    condition_index <- data$strength==strength
+    invalid_p <- data$predicted_p[condition_index] <= 0
+    if (any(invalid_p))  {
+      data$predicted_p[condition_index][invalid_p] <- 1e-10
+    }
+    
     bin_counts <- data$bin_counts[condition_index]
     log_likelihood <- log_likelihood + dmultinom(x = bin_counts, size = sum(bin_counts),
                                                  prob = data$predicted_p[condition_index],
@@ -545,7 +543,7 @@ cat("<ul><li>",
 
 
 ## Individual Subjects
-```{r subject_plots, cache=TRUE, fig.width=8.5, fig.align="center", results="asis"}
+```{r subject_plots, cache=TRUE, fig.width=8.5, fig.align="center", results="asis", dependson="fit"}
 
 for (s in unique(speeded_RT_choice_quantiles$subject)) {
   
