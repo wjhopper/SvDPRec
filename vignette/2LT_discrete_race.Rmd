@@ -109,6 +109,25 @@ guess_parameter_scaling <- function(b, reverse=FALSE) {
   return(theta)
 }
 
+
+parameter_scaling <- function(theta) {
+
+  # Compute response probabilities from each detect state based on bias parameter
+  theta["b"] <- -1 + ilogit(x = theta["b"], max=3)
+  bias_params <- guess_parameter_scaling(theta["b"])
+  
+  # Add new vector elements for the parameters that are computed based on existing ones.
+  theta <- c(theta, bias_params, "DN_L"=NA_real_, "DN_W"=NA_real_, "DN_S"=NA_real_)
+
+  # Convert detect paramters from log-odds scale to probability scale
+  theta[c("DO_L", "FD_L", "DN_L")] <- softmax(c(theta[c("DO_L", "FD_L")], 0))
+  theta[c("DO_W", "FD_W", "DN_W")] <- softmax(c(theta[c("DO_W", "FD_W")], 0))
+  theta[c("DO_S", "FD_S", "DN_S")] <- softmax(c(theta[c("DO_S", "FD_S")], 0))
+
+  return(theta)
+}
+
+
 pDR <- function(rt, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
 
   weights <- c("DO"=DO, "FD"=FD, "DN"=(1-DO-FD),
@@ -147,84 +166,47 @@ pDR <- function(rt, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
   return(p)
 }
 
-parameter_scaling <- function(theta) {
 
-  # Compute response probabilities from each detect state based on bias parameter
-  theta["b"] <- -1 + ilogit(x = theta["b"], max=3)
-  bias_params <- guess_parameter_scaling(theta["b"])
+qDR <- function(p, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
+
+  weights <- c("DO"=DO, "FD"=FD, "DN"=(1-DO-FD),
+               guess_parameter_scaling(b, reverse)
+               )
+  names(weights)[(length(weights)-2):length(weights)] <- c("GC_DN", "GC_FD", "GC_DO")
   
-  # Add new vector elements for the parameters that are computed based on existing ones.
-  theta <- c(theta, bias_params, "DN_L"=NA_real_, "DN_W"=NA_real_, "DN_S"=NA_real_)
+  n_samples <- 10000
+  p_detect <- sum(weights[c("DN", "DO")])
+  n_detect_trials <- max(1, rbinom(1, size = n_samples, p = p_detect))
 
-  # Convert detect paramters from log-odds scale to probability scale
-  theta[c("DO_L", "FD_L", "DN_L")] <- softmax(c(theta[c("DO_L", "FD_L")], 0))
-  theta[c("DO_W", "FD_W", "DN_W")] <- softmax(c(theta[c("DO_W", "FD_W")], 0))
-  theta[c("DO_S", "FD_S", "DN_S")] <- softmax(c(theta[c("DO_S", "FD_S")], 0))
+  detect_RTs <- c(gamlss.dist::rexGAUS(n_detect_trials,
+                                       mu = mu.d, sigma = sigma, nu = nu
+                                       ),
+                  rep(Inf, n_samples - n_detect_trials)
+                  )
 
-  return(theta)
-}
+  guess_RTs <- gamlss.dist::rexGAUS(n_samples, mu = mu.g, sigma = sigma, nu = nu)
 
-
-DR_quantiles <- function(theta, data) {
-  
-  theta <- parameter_scaling(theta)
-  
-  data$predicted_qValue <- numeric(nrow(data))
-
-  for (strength in unique(data$strength)) {
-
-    condition_index <- data$strength==strength
-    
-    if (strength == "L") {
-      weights <- c(theta[endsWith(names(theta), strength)],
-                   1-theta[c("RO_DN.b", "RO_FD.b", "RO_DO.b")]
-                   )
-    } else {
-      weights <- c(theta[endsWith(names(theta), strength)],
-                   theta[c("RO_DN.b", "RO_FD.b", "RO_DO.b")]
-                   )
-    }
-    names(weights)[(length(weights)-2):length(weights)] <- c("GC_DN", "GC_FD", "GC_DO")
-
-    n_samples <- 10000
-    p_detect <- sum(theta[paste0(c("DN_", "DO_"), strength)])
-    n_detect_trials <- max(1, rbinom(1, size = n_samples, p = p_detect))
-
-    detect_RTs <- c(gamlss.dist::rexGAUS(n_detect_trials,
-                                         mu = theta["mu.d"],
-                                         sigma = theta["sigma"],
-                                         nu = theta["nu"]),
-                    rep(Inf, n_samples - n_detect_trials)
-                    )
-
-    guess_RTs <- gamlss.dist::rexGAUS(n_samples,
-                                      mu = theta["mu.g"],
-                                      sigma = theta["sigma"],
-                                      nu = theta["nu"]
+  RTs <- pmin(detect_RTs, guess_RTs)
+  detect_wins <- detect_RTs == RTs
+  N_detect_wins <- sum(detect_wins)
+  accuracy <- logical(n_samples)
+  pCorrect_given_Detect <- weights["DO"] * weights["GC_DO"] +
+                           weights["DN"] * weights["GC_DN"]
+  accuracy[detect_wins] <- as.logical(rbinom(N_detect_wins,
+                                             1, pCorrect_given_Detect)
                                       )
+  pCorrect_given_Fail <- weights["FD"] * weights["GC_FD"]
+  accuracy[!detect_wins] <- as.logical(rbinom(n_samples - N_detect_wins,
+                                              1, pCorrect_given_Fail)
+                                       )
 
-    RTs <- pmin(detect_RTs, guess_RTs)
-    detect_wins <- detect_RTs == RTs
-    N_detect_wins <- sum(detect_wins)
-    accuracy <- logical(n_samples)
-    pCorrect_given_Detect <- weights[paste0("DO_", strength)] * weights["GC_DO"] +
-                             weights[paste0("DN_", strength)] * weights["GC_DN"]
-    accuracy[detect_wins] <- as.logical(rbinom(N_detect_wins,
-                                               1, pCorrect_given_Detect)
-                                        )
-    pCorrect_given_Fail <- weights[paste0("FD_", strength)] * weights["GC_FD"]
-    accuracy[!detect_wins] <- as.logical(rbinom(n_samples - N_detect_wins,
-                                                1, pCorrect_given_Fail)
-                                         )
-
-    data$predicted_qValue[data$speeded_correct] <-
-      quantile(RTs[accuracy], c(.1, .3, .5, .7, .9, 1))
-    
-    data$predicted_qValue[!data$speeded_correct] <-
-      quantile(RTs[!accuracy], c(.1, .3, .5, .7, .9, 1))
+  if (correct) {
+    q <- quantile(RTs[accuracy], p)
+  } else {
+    q <- quantile(RTs[!accuracy], p)
   }
-
-  return(data)
+  
+  return(q)
 }
 
 
@@ -377,26 +359,26 @@ strength_wise_params <- left_join(detect_params,
                                   by = "subject"
                                   )
 variables <- setdiff(names(strength_wise_params), c("subject", "strength"))
-tidy_params <- bind_rows(mutate(strength_wise_params, speeded_correct = FALSE),
-                         mutate(strength_wise_params, speeded_correct = TRUE)
-                         ) %>%
+condition_wise_params <- bind_rows(mutate(strength_wise_params, speeded_correct = FALSE),
+                                   mutate(strength_wise_params, speeded_correct = TRUE)
+                                   ) %>% 
   select(subject, strength, speeded_correct, !!!variables)
 ```
 
 
-```{r predictions, cache=TRUE, dependson="fit"}
+```{r predicted_accuracy, cache=TRUE, dependson="fit"}
 
-predicted_probabilities <- left_join(tidy_params,
-                                      select(speeded_RT_choice_quantiles, -bin_counts),
-                                      by = c("subject", "strength", "speeded_correct")
-                                      ) %>%
+predicted_probabilities <- left_join(condition_wise_params,
+                                     select(speeded_RT_choice_quantiles, -bin_counts),
+                                     by = c("subject", "strength", "speeded_correct")
+                                     ) %>%
   rowwise() %>%
   mutate(predicted_p = pDR(rt=value, correct=speeded_correct,
                            DO, FD, b, mu.d, mu.g, sigma, nu,
                            reverse = strength == "L")
          ) %>%
-  select(-variables) %>%
   ungroup() %>%
+  select(-variables) %>%
   group_by(subject, strength, speeded_correct) %>%
   mutate(predicted_p = diff(c(0, predicted_p))) %>%
   ungroup()
@@ -416,27 +398,37 @@ accuracy <- bind_rows(twoLT = rename(predicted_acc, acc = predicted_acc),
                       .id = "type"
                       ) %>%
   mutate(strength = factor(strength, levels = c("L","W","S")))
+```
 
-predicted_quantiles <- Map(DR_quantiles,
-                           lapply(twoLT_DR_fits_optimx, function(x) unlist(x[1:11])),
-                           split(speeded_RT_choice_quantiles,
-                                 speeded_RT_choice_quantiles$subject)
-                           ) %>%
-  bind_rows() %>%
-  select(-bin_counts) %>%
-  rename(observed=value) %>%
-  gather("type", "value", observed, predicted_qValue) %>%
-  mutate(type = recode(type,
-                       observed = "obs",
-                       predicted_qValue="twoLT"
-                       ),
-         strength = factor(strength, levels = c("L","W","S")))
+```{r predicted_quantiles, cache=TRUE, dependson="fit"}
 
-conditional_quantiles_subject <- 
+predicted_quantiles <-
+  rowwise(condition_wise_params) %>%
+  mutate(predicted_q = list(as.data.frame(as.list(
+    qDR(p=c(.1, .3, .5, .7, .9, 1),
+        correct = speeded_correct,
+        DO, FD, b, mu.d, mu.g, sigma, nu,
+        reverse = strength == "L"
+        )
+      ),
+    check.names=FALSE)
+    )) %>%
+  ungroup() %>%
+  select(subject, strength, speeded_correct, predicted_q) %>%
+  unnest() %>%
+  gather(key="quantile", value="value", contains("%"), factor_key = TRUE) %>%
+  arrange(subject, strength, speeded_correct)
+
+quantiles <- bind_rows(twoLT = predicted_quantiles,
+                       obs = select(speeded_RT_choice_quantiles, -bin_counts),
+                       .id="type") %>%
+  mutate(strength = factor(strength, levels = c("L","W","S")))
+
+conditional_quantiles_subject <-
   mutate(accuracy, inc=1-acc) %>%
   gather(key="speeded_correct", value="p", acc, inc) %>%
   mutate(speeded_correct = ifelse(speeded_correct=="acc", TRUE, FALSE)) %>%
-  right_join(predicted_quantiles,
+  right_join(quantiles,
              by = c("subject", "strength", "speeded_correct", "type")
              ) %>%
   filter(quantile != "100%") %>%
@@ -594,7 +586,7 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
           axis.text.x = element_blank())
   
   quantile_plot <- 
-    ggplot(filter(predicted_quantiles, subject == s, quantile != "100%"),
+    ggplot(filter(quantiles, subject == s, quantile != "100%"),
            aes(x=quantile, y=value, shape=type, color=strength)) +
     geom_point(size=1.5) +
     geom_line(aes(group=type)) +
