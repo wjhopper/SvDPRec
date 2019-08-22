@@ -56,7 +56,7 @@ dcRT <- function(x, mu, sigma, nu, weights) {
   # Detect New Pathway
   DN <- pDetect_New * p_guess_process_unfinished * detect_RT_density * pGuess_Correct[1]
   # Fail to Detect pathway, detection unavailable
-  FD <- (1 - pDetect_Old - pDetect_New) * guess_RT_density * pGuess_Correct[2]
+  FD <- pFail * guess_RT_density * pGuess_Correct[2]
   # Fail to Detect pathway, guessing wins
   FD_win <- (pDetect_Old + pDetect_New) * p_detect_process_unfinished * guess_RT_density * pGuess_Correct[2]
   
