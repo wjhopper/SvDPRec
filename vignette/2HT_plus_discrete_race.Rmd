@@ -31,6 +31,7 @@ img {
   padding-top: 10px;
 }
 ```
+
 ```{r load_data}
 load(file.path(root_dir, "data", "SvDPRec.Rdata"))
 test <- select(test, -list)

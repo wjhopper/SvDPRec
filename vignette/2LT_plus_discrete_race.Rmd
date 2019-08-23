@@ -1,0 +1,385 @@
+---
+title: "Discrete Race  + Two Low-Threshold"
+author: "William Hopper"
+date: "`r format(Sys.Date(), '%b %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
+library(gamlss.dist)
+library(rprojroot)
+library(kableExtra)
+library(optimx)
+library(foreach)
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+root_dir <- rprojroot::is_rstudio_project$find_file()
+```
+
+```{css css}
+.main-container{
+  max-width: 1200px;
+}
+```
+
+```{r load_data}
+load(file.path(root_dir, "data", "SvDPRec.Rdata"))
+test <- select(test, -list)
+```
+
+
+```{r cell_counts, cache=TRUE}
+delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
+  select(-starts_with("speeded")) %>%
+  rename(correct = delayed_correct) %>%
+  count(subject, strength, pOld, correct) %>%
+  complete(subject, strength, pOld, correct,
+           fill = list(n=0)) %>%
+  unite(col = "resp_type", strength, correct) %>%
+  spread(resp_type, n) %>%
+  rename(FA = L_FALSE, CR = L_TRUE,
+         M_S = S_FALSE, H_S = S_TRUE,
+         M_W = W_FALSE, H_W = W_TRUE) %>%
+  mutate(FA_N = FA + CR,
+         S_N = M_S + H_S,
+         W_N = M_W + H_W) %>%
+  select(subject, pOld, FA, CR, FA_N, H_S, M_S, S_N, H_W, M_W, W_N)
+
+speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
+  filter(speeded_RT > 200) %>%
+  mutate(speeded_RT = speeded_RT/1000) %>%
+  group_by(subject, strength, speeded_correct) %>%
+  summarise(quintiles = list(
+              data.frame(quantile = c("10%", "30%", "50%", "70%", "90%", "100%"),
+                         value = quantile(speeded_RT, c(.1, .3, .5, .7, .9, 1)),
+                         bin_counts = floor(n() * c(.1, .2, .2, .2, .2, .1)),
+                         stringsAsFactors = FALSE)
+              )) %>%
+  ungroup() %>%
+  unnest()
+
+speeded_acc <- filter(test, !is.na(type)) %>%
+  group_by(subject, strength) %>%
+  summarise(acc = mean(speeded_correct))
+```
+
+```{r discrete_race_exgaussians, cache=TRUE}
+## mu, sigma & nu should be vectors of length 2
+## First element should be parameter for detect distribution
+## Second element should be parameter for guess distribution
+
+## Weight is also vector of length
+## First element is probability of detection being available
+## Second element is probability of guessing correctly
+## These are independent probabilities, need not sum to 1
+dcRT <- function(x, mu, sigma, nu, weights) {
+  
+  pDetect_Old <- weights[1]
+  pFail <- weights[2]
+  pDetect_New <- weights[3]
+  pGuess_Correct <- weights[4:6]
+  
+  p_detect_process_unfinished <- gamlss.dist::pexGAUS(x, mu[1], sigma[1], nu[1], lower.tail = FALSE)
+  p_guess_process_unfinished <- gamlss.dist::pexGAUS(x, mu[2], sigma[2], nu[2], lower.tail = FALSE)
+  
+  detect_RT_density <- gamlss.dist::dexGAUS(x, mu[1], sigma[1], nu[1])
+  guess_RT_density <- gamlss.dist::dexGAUS(x, mu[2], sigma[2], nu[2])
+  
+  # Detect Old Pathway
+  DO <- pDetect_Old * p_guess_process_unfinished * detect_RT_density * pGuess_Correct[3]
+  # Detect New Pathway
+  DN <- pDetect_New * p_guess_process_unfinished * detect_RT_density * pGuess_Correct[1]
+  # Fail to Detect pathway, detection unavailable
+  FD <- pFail * guess_RT_density * pGuess_Correct[2]
+  # Fail to Detect pathway, guessing wins
+  FD_win <- (pDetect_Old + pDetect_New) * p_detect_process_unfinished * guess_RT_density * pGuess_Correct[2]
+  
+  correct_RT_density <- DO + DN + FD + FD_win
+  return(correct_RT_density)
+}
+
+## mu, sigma & nu should be vectors of length 2
+## Nu is mean of exponential process (also denoted as tao sometimes)
+## First element should be parameter for detect distribution
+## Second element should be parameter for guess distribution
+
+## Weight is also vector of length
+## First element is probability of detection being available
+## Second element is probability of guessing *incorrectly*
+## These are independent probabilities, need not sum to 1
+
+deRT <- function(x, mu, sigma, nu, weights) {
+  weights[4:6] <- 1 - weights[4:6]
+  incorrect_RT_density <- dcRT(x, mu, sigma, nu, weights)
+  return(incorrect_RT_density)
+}
+```
+
+```{r objective_functions, cache=TRUE}
+
+softmax <- function(x) {
+  return(exp(x)/sum(exp(x)))
+}
+
+ilogit <- function(x, max=1) {
+  return(max/(1+exp(-x)))
+}
+
+calculate_RO_parameters <- function(b, reverse=FALSE) {
+
+  # Compute response probabilities from each detect state based on bias parameter
+  if (b > 2 || b < -1) {
+    stop("Bias parameter must lie within [-1, 2]")
+  }
+  
+  param_names <- names(b)
+  names(b) <- sub("b_", "", param_names)
+  
+  RO_DN <- abs(pmin(b, 0))
+  RO_FD <- pmax(pmin(1-b, 1), 0)
+  RO_DO <-  2 - pmax(b, 1)
+  theta <- c("RO_DN"=RO_DN, "RO_FD"=RO_FD, "RO_DO"=RO_DO)
+  
+  if (reverse) {
+    theta <- 1-theta
+  }
+  return(theta)
+}
+
+
+parameter_scaling <- function(theta) {
+
+  # Compute response probabilities from each detect state based on bias parameter
+  bias_param_ind <- startsWith(names(theta), "b")
+  rescaled_bias_params <- -1 + ilogit(x = theta[bias_param_ind], max=3)
+  RO_params <- calculate_RO_parameters(rescaled_bias_params)
+  
+  # Add new vector elements for the parameters that are computed based on existing ones.
+  theta <- c(theta, RO_params, "DN_L"=NA_real_, "DN_W"=NA_real_, "DN_S"=NA_real_)
+
+  # Convert detect paramters from log-odds scale to probability scale
+  theta[c("DO_L", "FD_L", "DN_L")] <- softmax(c(theta[c("DO_L", "FD_L")], 0))
+  theta[c("DO_W", "FD_W", "DN_W")] <- softmax(c(theta[c("DO_W", "FD_W")], 0))
+  theta[c("DO_S", "FD_S", "DN_S")] <- softmax(c(theta[c("DO_S", "FD_S")], 0))
+
+  return(theta)
+}
+
+
+pDR <- function(rt, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
+
+  weights <- c("DO"=DO, "FD"=FD, "DN"=(1-DO-FD),
+               guess_parameter_scaling(b, reverse)
+               )
+
+  n_correct <- length(correct)
+  n_rt <-  length(rt)
+  
+  if (n_correct != n_rt) {
+    if (n_correct == 1) {
+      correct <- rep(correct, n_rt)
+    } else {
+      stop("Length of 'correct' argument vector must be 1, or match length of 'rt' argument vector.")
+    }
+  }
+  
+  p <- numeric(length=n_rt)
+  for (i in 1:length(p)) {
+    
+    if (correct[i]) {
+      density_fn = dcRT
+    } else {
+      density_fn = deRT
+    }
+
+    x <- integrate(density_fn, 0, rt[i],
+                   mu = c(mu.d, mu.g),
+                   sigma = c(sigma, sigma),
+                   nu = c(nu, nu),
+                   weights = weights
+                   )
+    p[i] <- x$value
+  }
+
+  return(p)
+}
+
+
+qDR <- function(p, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
+
+  weights <- c("DO"=DO, "FD"=FD, "DN"=(1-DO-FD),
+               guess_parameter_scaling(b, reverse)
+               )
+  names(weights)[(length(weights)-2):length(weights)] <- c("GC_DN", "GC_FD", "GC_DO")
+  
+  n_samples <- 10000
+  p_detect <- sum(weights[c("DN", "DO")])
+  n_detect_trials <- max(1, rbinom(1, size = n_samples, p = p_detect))
+
+  detect_RTs <- c(gamlss.dist::rexGAUS(n_detect_trials,
+                                       mu = mu.d, sigma = sigma, nu = nu
+                                       ),
+                  rep(Inf, n_samples - n_detect_trials)
+                  )
+
+  guess_RTs <- gamlss.dist::rexGAUS(n_samples, mu = mu.g, sigma = sigma, nu = nu)
+
+  RTs <- pmin(detect_RTs, guess_RTs)
+  detect_wins <- detect_RTs == RTs
+  N_detect_wins <- sum(detect_wins)
+  accuracy <- logical(n_samples)
+  pCorrect_given_Detect <- weights["DO"] * weights["GC_DO"] +
+                           weights["DN"] * weights["GC_DN"]
+  accuracy[detect_wins] <- as.logical(rbinom(N_detect_wins,
+                                             1, pCorrect_given_Detect)
+                                      )
+  pCorrect_given_Fail <- weights["FD"] * weights["GC_FD"]
+  accuracy[!detect_wins] <- as.logical(rbinom(n_samples - N_detect_wins,
+                                              1, pCorrect_given_Fail)
+                                       )
+
+  if (correct) {
+    q <- quantile(RTs[accuracy], p)
+  } else {
+    q <- quantile(RTs[!accuracy], p)
+  }
+  
+  return(q)
+}
+
+
+DR_obj <- function(theta, data) {
+
+  data$predicted_p <- numeric(nrow(data))
+  
+  log_likelihood <- 0
+  
+  for (strength in unique(data$strength)) {
+
+    condition_index <- data$strength==strength
+    DO <- theta[paste0("DO_", strength)]
+    FD <- theta[paste0("FD_", strength)]
+    
+    for (acc in unique(data$speeded_correct)) {
+
+      index_vector <- condition_index & data$speeded_correct == acc
+      rt_cutpoints <- data$value[index_vector]
+      rt_cutpoints[length(rt_cutpoints)] <- Inf
+
+      
+      p <- pDR(rt = rt_cutpoints, correct = acc,
+               DO = DO, FD = FD,
+               b = theta["b"],
+               mu.d = theta["mu.d"], mu.g=theta["mu.g"],
+               sigma = theta["sigma"], nu=theta["nu"],
+               reverse = strength == "L"
+               )
+
+      data$predicted_p[index_vector] <- diff(c(0, p))
+    }
+
+    invalid_p <- data$predicted_p[condition_index] <= 0
+    if (any(invalid_p))  {
+      data$predicted_p[condition_index][invalid_p] <- 1e-10
+    }
+    
+    bin_counts <- data$bin_counts[condition_index]
+    log_likelihood <- log_likelihood + dmultinom(x = bin_counts, size = sum(bin_counts),
+                                                 prob = data$predicted_p[condition_index],
+                                                 log = TRUE)
+  }
+
+  return(-log_likelihood)
+}
+
+
+twoLT <- function(theta) {
+  
+  b <- theta[c("GO_Cons", "GO_Neut", "GO_Lib")]
+  O_DN <- abs(pmin(b, 0))
+  O_FD <- pmax(pmin(1-b, 1), 0)
+  O_DO <-  2 - pmax(b, 1)
+  
+  FAR <- theta["DO_L"]*O_DO + theta["FD_L"]*O_FD + theta["DN_L"]*O_DN
+  HR_W <- theta['DO_W']*O_DO + theta["FD_W"]*O_FD + theta["DN_W"]*O_DN
+  HR_S <- theta['DO_S']*O_DO + theta["FD_S"]*O_FD + theta["DN_S"]*O_DN
+  
+  return(list(FAR=FAR, HR_W=HR_W, HR_S=HR_S))
+}
+
+
+twoLT_LL <- function(theta, counts, fixed=NULL) {
+
+  preds <- twoLT(theta)
+
+  LL <- c(dbinom(counts$H_S, size = counts$S_N, prob = preds$HR_S, log=TRUE),
+          dbinom(counts$H_W, size = counts$W_N, prob = preds$HR_W, log=TRUE),
+          dbinom(counts$FA, size = counts$L_N, prob = preds$FAR, log=TRUE)
+          )
+
+  return(-sum(LL))
+}
+
+
+twoLT_plus_DR <- function(theta, data, fixed=NULL) {
+  
+  theta <- c(theta, fixed)
+  theta <- parameter_scaling(theta)
+
+  twoLT_negLL <- twoLT_LL(detect=theta[c("dNew.L", "dOld.W", "dOld.S")],
+                          guess=theta[c("gC", "gN", "gL")], #this order matters
+                          counts = data$biased)
+  
+  DR_negLL <- DR_obj(theta[c("dNew.L", "dOld.W", "dOld.S", "gOld",
+                            "mu.d", "mu.g", "sigma", "nu")],
+                     data = data$speeded)
+  
+  negLL <- twoLT_negLL + DR_negLL
+
+  return(negLL)
+}
+```
+
+```{r}
+cl <- parallel::makeCluster(parallel::detectCores(),
+                            outfile = "",
+                            methods = FALSE)
+
+doParallel::registerDoParallel(cl)
+
+subjectwise_datalist <- Map(
+  function(x,y) { list("speeded" = x,"biased" = y)},
+  split(speeded_RT_choice_quantiles, speeded_RT_choice_quantiles$subject),
+  split(delayed_counts_by_sub_bias, delayed_counts_by_sub_bias$subject)
+  )
+
+fits <- foreach(sub = subjectwise_datalist,
+                .packages = c("rtdists","optimx")) %dopar% {
+
+    theta <- c("DO_L"=0.01, "FD_L"=0.01, "DO_W"=0.01, "FD_W"=0.01, "DO_S" = 0.01, "FD_S" = 0.01,
+               "b_C" = 1, "b_N" = 0.5, "b_L" = 0,
+               "mu.d" = .5, "mu.g" = .75, "sigma" = .25, "nu" = .25
+               )
+    fit <- optimx(theta,
+                  fn = twoLT_plus_DR,
+                  method = "nlminb",
+                  itnmax = 3000,
+                  lower = c(-Inf,-Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, 0.01, 0.01, .01, .01),
+                  upper = c(Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf, 2,    2,    .5,  .5),
+                  control = list(kkt = FALSE),
+                  data = sub)
+
+    fit$subject <- sub$speeded$subject[1]
+    fit
+  }
+
+parallel::stopCluster(cl)
+```
+
