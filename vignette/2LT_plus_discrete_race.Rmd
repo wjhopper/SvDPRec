@@ -498,3 +498,56 @@ ROC_point_predictions <- bind_rows(obs = obs_ROC_data,
   arrange(subject, strength,pOld, type)
 
 ```
+
+```{r condition_wise_parameters}
+detect_params <-
+  select(.data = twoLT_plus_DR_params_scaled_subject,
+         subject, DO_L, FD_L, DN_L, DO_W, FD_W, DN_W, DO_S, FD_S, DN_S) %>%
+  gather(key="param", value="value", -subject) %>%
+  separate(param, c("param", "strength")) %>%
+  spread(param, value)
+
+strength_wise_params <- left_join(detect_params,
+                                  select(.data = twoLT_plus_DR_params_scaled_subject,
+                                         subject, b, mu.d, mu.g, sigma, nu),
+                                  by = "subject"
+                                  )
+
+variables <- setdiff(names(strength_wise_params), c("subject", "strength"))
+condition_wise_params <- bind_rows(mutate(strength_wise_params, speeded_correct = FALSE),
+                                   mutate(strength_wise_params, speeded_correct = TRUE)
+                                   ) %>% 
+  select(subject, strength, speeded_correct, !!!variables)
+```
+
+```{r ROC_plots, fig.width=10, fig.height=10, dependson="2LT_fit"}
+ggplot(ROC_point_predictions,
+       aes(x=FAR, y=HR,  shape=type, linetype=strength,
+           group=interaction(type, strength))
+       ) +
+  geom_line(size=1) +
+  geom_point(aes(color=pOld), size=2, stroke=1.3) +
+  facet_wrap(~subject, labeller = label_both) +
+  scale_x_continuous("False Alarm Rate", limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_linetype_discrete("Strength",
+                          labels=c("W" = "Weak",
+                                   "S" = "Strong")) +
+  scale_color_manual("p(Old)", values = c("#d82d2d", "#d8d834", "#17b50c")) +
+  scale_shape_manual("Type",
+                     values=c(16, 4),
+                     breaks = c("obs", "twoLT"),
+                     labels = c("Observed", "Two LT")) +
+  guides(colour = guide_legend(override.aes = list(size = 4)),
+         shape = guide_legend(override.aes = list(size = 4))) +
+  ggtitle("Two LT Model ROC") +
+  theme_bw(base_size = 16) +
+  theme(plot.title = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.width = unit(10,"mm"),
+        legend.position = c(.75, .10),
+        legend.box = "horizontal")
+```
+
+
