@@ -332,7 +332,7 @@ subjectwise_datalist <- Map(
   )
 
 fits <- foreach(sub = subjectwise_datalist,
-                   .packages = c("rtdists","optimx")) %dopar% {
+                   .packages = c("optimx")) %dopar% {
 
   theta <- c("dNew.L" = .5, "dOld.W" = .5, "dOld.S"=.75, "gOld"=.5,
              "mu.d" = .5, "mu.g" = .75, "sigma" = .25, "nu" = .25,
