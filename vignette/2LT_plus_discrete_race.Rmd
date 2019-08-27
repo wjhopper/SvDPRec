@@ -47,10 +47,10 @@ delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
   rename(FA = L_FALSE, CR = L_TRUE,
          M_S = S_FALSE, H_S = S_TRUE,
          M_W = W_FALSE, H_W = W_TRUE) %>%
-  mutate(FA_N = FA + CR,
+  mutate(L_N = FA + CR,
          S_N = M_S + H_S,
          W_N = M_W + H_W) %>%
-  select(subject, pOld, FA, CR, FA_N, H_S, M_S, S_N, H_W, M_W, W_N)
+  select(subject, pOld, FA, CR, L_N, H_S, M_S, S_N, H_W, M_W, W_N)
 
 speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
   filter(speeded_RT > 200) %>%
@@ -176,7 +176,7 @@ parameter_scaling <- function(theta) {
 pDR <- function(rt, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
 
   weights <- c("DO"=DO, "FD"=FD, "DN"=(1-DO-FD),
-               guess_parameter_scaling(b, reverse)
+               calculate_RO_parameters(b, reverse)
                )
 
   n_correct <- length(correct)
@@ -215,7 +215,7 @@ pDR <- function(rt, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
 qDR <- function(p, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
 
   weights <- c("DO"=DO, "FD"=FD, "DN"=(1-DO-FD),
-               guess_parameter_scaling(b, reverse)
+               calculate_RO_parameters(b, reverse)
                )
   names(weights)[(length(weights)-2):length(weights)] <- c("GC_DN", "GC_FD", "GC_DO")
   
@@ -302,14 +302,13 @@ DR_obj <- function(theta, data) {
 
 twoLT <- function(theta) {
   
-  b <- theta[c("GO_Cons", "GO_Neut", "GO_Lib")]
-  O_DN <- abs(pmin(b, 0))
-  O_FD <- pmax(pmin(1-b, 1), 0)
-  O_DO <-  2 - pmax(b, 1)
+  RO_DN <- theta[c("RO_DN.C", "RO_DN.N", "RO_DN.L")]
+  RO_FD <- theta[c("RO_FD.C", "RO_FD.N", "RO_FD.L")]
+  RO_DO <- theta[c("RO_DO.C", "RO_DO.N", "RO_DO.L")]
   
-  FAR <- theta["DO_L"]*O_DO + theta["FD_L"]*O_FD + theta["DN_L"]*O_DN
-  HR_W <- theta['DO_W']*O_DO + theta["FD_W"]*O_FD + theta["DN_W"]*O_DN
-  HR_S <- theta['DO_S']*O_DO + theta["FD_S"]*O_FD + theta["DN_S"]*O_DN
+  FAR <- theta["DO_L"]*RO_DO + theta["FD_L"]*RO_FD + theta["DN_L"]*RO_DN
+  HR_W <- theta['DO_W']*RO_DO + theta["FD_W"]*RO_FD + theta["DN_W"]*RO_DN
+  HR_S <- theta['DO_S']*RO_DO + theta["FD_S"]*RO_FD + theta["DN_S"]*RO_DN
   
   return(list(FAR=FAR, HR_W=HR_W, HR_S=HR_S))
 }
@@ -333,13 +332,21 @@ twoLT_plus_DR <- function(theta, data, fixed=NULL) {
   theta <- c(theta, fixed)
   theta <- parameter_scaling(theta)
 
-  twoLT_negLL <- twoLT_LL(detect=theta[c("dNew.L", "dOld.W", "dOld.S")],
-                          guess=theta[c("gC", "gN", "gL")], #this order matters
+  twoLT_negLL <- twoLT_LL(theta[c("DO_L", "FD_L", "DN_L",
+                                  "DO_W", "FD_W", "DN_W",
+                                  "DO_S", "FD_S", "DN_S",
+                                  "RO_DN.C", "RO_DN.N", "RO_DN.L",
+                                  "RO_FD.C", "RO_FD.N", "RO_FD.L",
+                                  "RO_DO.C", "RO_DO.N", "RO_DO.L"
+                                )],
                           counts = data$biased)
   
-  DR_negLL <- DR_obj(theta[c("dNew.L", "dOld.W", "dOld.S", "gOld",
-                            "mu.d", "mu.g", "sigma", "nu")],
-                     data = data$speeded)
+  DR_negLL <- DR_obj(theta[c("DO_L", "FD_L", "DN_L",
+                             "DO_W", "FD_W", "DN_W",
+                             "DO_S", "FD_S", "DN_S",
+                             "b", "mu.d", "mu.g", "sigma", "nu"
+                             )],
+                             data = data$speeded)
   
   negLL <- twoLT_negLL + DR_negLL
 
@@ -360,19 +367,20 @@ subjectwise_datalist <- Map(
   split(delayed_counts_by_sub_bias, delayed_counts_by_sub_bias$subject)
   )
 
-fits <- foreach(sub = subjectwise_datalist,
-                .packages = c("rtdists","optimx")) %dopar% {
+twoLT_plus_DR_fits_optimx <- 
+  foreach(sub = subjectwise_datalist,
+          .packages = c("optimx")) %dopar% {
 
     theta <- c("DO_L"=0.01, "FD_L"=0.01, "DO_W"=0.01, "FD_W"=0.01, "DO_S" = 0.01, "FD_S" = 0.01,
-               "b_C" = 1, "b_N" = 0.5, "b_L" = 0,
+               "b"=0.5, "b_C" = 1, "b_N" = 0.5, "b_L" = 0,
                "mu.d" = .5, "mu.g" = .75, "sigma" = .25, "nu" = .25
                )
     fit <- optimx(theta,
                   fn = twoLT_plus_DR,
                   method = "nlminb",
                   itnmax = 3000,
-                  lower = c(-Inf,-Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, 0.01, 0.01, .01, .01),
-                  upper = c(Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf, 2,    2,    .5,  .5),
+                  lower = c(-Inf,-Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, 0.01, 0.01, .01, .01),
+                  upper = c(Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf, 2,    2,    .5,  .5),
                   control = list(kkt = FALSE),
                   data = sub)
 
