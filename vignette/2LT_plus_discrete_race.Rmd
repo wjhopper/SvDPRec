@@ -68,6 +68,20 @@ speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
 speeded_acc <- filter(test, !is.na(type)) %>%
   group_by(subject, strength) %>%
   summarise(acc = mean(speeded_correct))
+
+obs_ROC_data <- mutate(delayed_counts_by_sub_bias,
+                       FAR = FA/L_N,
+                       HR_W = H_W/W_N,
+                       HR_S = H_S/S_N,
+                       pOld = sprintf("%2.0f%%", pOld*100)) %>%
+  select(subject, pOld, FAR, HR_W, HR_S) %>%
+  gather(key="strength", value="HR", HR_W, HR_S) %>%
+  mutate(strength = sub("HR_", "", strength)) %>%
+  select(subject, pOld, strength, FAR, HR)
+
+obs_avg_ROC_data <- group_by(obs_ROC_data, pOld, strength) %>%
+  summarise_at(.vars = c("FAR", "HR"), .funs = "mean") %>%
+  ungroup()
 ```
 
 ```{r discrete_race_exgaussians, cache=TRUE}
@@ -389,5 +403,98 @@ twoLT_plus_DR_fits_optimx <-
   }
 
 parallel::stopCluster(cl)
+
+twoLT_plus_DR_fits <- bind_rows(twoLT_plus_DR_fits_optimx)
 ```
 
+```{r parameters}
+parameter_names <- colnames(coef(twoLT_plus_DR_fits_optimx[[1]]))
+
+twoLT_plus_DR_params_subject <- dplyr::select(twoLT_plus_DR_fits, subject, !!!parameter_names)
+
+twoLT_plus_DR_params_scaled_subject <- rowwise(twoLT_plus_DR_params_subject) %>%
+  do({
+    data.frame(subject = .$subject,
+               as.list(parameter_scaling(unlist(.[parameter_names]))),
+               stringsAsFactors = FALSE
+               )
+    }) %>%
+  ungroup()
+
+twoLT_plus_DR_params_avg <- as.data.frame(t(colMeans(twoLT_plus_DR_params_subject[parameter_names])))
+twoLT_plus_DR_params_scaled_avg <- as.data.frame(t(colMeans(twoLT_plus_DR_params_scaled_subject[parameter_names])))
+```
+
+```{r GOF, cache=TRUE, dependson="fit"}
+speeded_RT_LL <- speeded_RT_choice_quantiles %>%
+  group_by(subject, strength) %>%
+  mutate(observed_p = bin_counts/sum(bin_counts)) %>%
+  summarise(null_LL = dmultinom(bin_counts, sum(bin_counts), observed_p, log=TRUE)) %>%
+  ungroup()
+
+
+delayed_acc_LL <- mutate(delayed_counts_by_sub_bias,
+                         FA_LL = dbinom(FA, L_N, FA / L_N, log = TRUE),
+                         HW_LL = dbinom(H_W, W_N, H_W / W_N, log = TRUE),
+                         HS_LL = dbinom(H_S, S_N, H_S / S_N, log = TRUE),
+                         LL = FA_LL + HW_LL + HS_LL) %>% 
+  select(subject, pOld, LL) %>%
+  group_by(subject) %>%
+  summarise(null_LL = sum(LL)) %>%
+  ungroup()
+
+
+null_LL <- left_join(speeded_RT_LL, delayed_acc_LL,
+                     by="subject", suffix=c(".RT",".acc")) %>%
+  transmute(subject,
+            null_LL = null_LL.RT + null_LL.acc)
+
+
+data_df <- 9 + 33 # 9 Hit/FA rates, 33 free RT bins
+model_df <- length(parameter_names)
+
+
+twoLT_plus_DR_GOF_subject <-
+  dplyr::select(.data=twoLT_plus_DR_fits,
+                subject, value, fevals, gevals, niter, convcode) %>%
+  mutate(LL = -value) %>%
+  left_join(x = .,  y = null_LL,
+            by = "subject") %>%
+  mutate(G2 = -2*(LL - null_LL),
+         df = data_df - model_df,
+         p = pchisq(G2, df = df, lower.tail = FALSE)
+         ) %>%
+  dplyr::select(subject, LL, null_LL, G2, df, p, fevals, gevals, niter, convcode)
+
+
+twoLT_plus_DR_GOF_sum <- as.data.frame(t(colSums(twoLT_plus_DR_GOF_subject[c("LL", "null_LL", "G2", "df")]))) %>%
+  mutate(p = pchisq(G2, df = df, lower.tail = FALSE))
+
+```
+
+```{r twoLT_predictions, dependson="2LT_fit"}
+twoLT_point_predictions <-
+  select(.data = twoLT_plus_DR_params_scaled_subject,
+         subject, DO_L, FD_L, DN_L, DO_W, FD_W, DN_W, DO_S, FD_S, DN_S,
+         ends_with(".C"), ends_with(".N"), ends_with(".L")) %>%
+  gather(-subject, key="parameter", value="value") %>%
+  arrange(subject) %>%
+  group_by(subject) %>%
+  transmute(x = list(as.data.frame(
+      c(pOld = list(c("25%", "50%", "75%")),
+        twoLT(setNames(value, parameter))
+        ),
+      stringsAsFactors=FALSE
+    ))) %>% 
+  unnest() %>%
+  rename(S=HR_S, W=HR_W) %>%
+  gather(key = "strength", value="HR", S, W)
+
+ROC_point_predictions <- bind_rows(obs = obs_ROC_data,
+                                   twoLT = twoLT_point_predictions,
+                                   .id = "type"
+                                   ) %>%
+  select(subject, type, strength, pOld, FAR, HR) %>%
+  arrange(subject, strength,pOld, type)
+
+```
