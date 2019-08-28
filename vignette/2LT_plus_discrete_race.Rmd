@@ -11,7 +11,7 @@ editor_options:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center", cache=TRUE)
 library(gamlss.dist)
 library(rprojroot)
 library(kableExtra)
@@ -27,6 +27,10 @@ root_dir <- rprojroot::is_rstudio_project$find_file()
 .main-container{
   max-width: 1200px;
 }
+
+#individual-subjects img{
+  padding-bottom: 100px;
+}
 ```
 
 ```{r load_data}
@@ -34,8 +38,7 @@ load(file.path(root_dir, "data", "SvDPRec.Rdata"))
 test <- select(test, -list)
 ```
 
-
-```{r cell_counts, cache=TRUE}
+```{r cell_counts, dependson="load_data"}
 delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
   select(-starts_with("speeded")) %>%
   rename(correct = delayed_correct) %>%
@@ -84,7 +87,7 @@ obs_avg_ROC_data <- group_by(obs_ROC_data, pOld, strength) %>%
   ungroup()
 ```
 
-```{r discrete_race_exgaussians, cache=TRUE}
+```{r discrete_race_exgaussians}
 ## mu, sigma & nu should be vectors of length 2
 ## First element should be parameter for detect distribution
 ## Second element should be parameter for guess distribution
@@ -136,7 +139,7 @@ deRT <- function(x, mu, sigma, nu, weights) {
 }
 ```
 
-```{r objective_functions, cache=TRUE}
+```{r objective_functions}
 
 softmax <- function(x) {
   return(exp(x)/sum(exp(x)))
@@ -368,7 +371,7 @@ twoLT_plus_DR <- function(theta, data, fixed=NULL) {
 }
 ```
 
-```{r}
+```{r fit, dependson=c("cell_counts","discrete_race_exgaussians", "objective_functions")}
 cl <- parallel::makeCluster(parallel::detectCores(),
                             outfile = "",
                             methods = FALSE)
@@ -407,7 +410,7 @@ parallel::stopCluster(cl)
 twoLT_plus_DR_fits <- bind_rows(twoLT_plus_DR_fits_optimx)
 ```
 
-```{r parameters}
+```{r parameters, dependson="fit"}
 parameter_names <- colnames(coef(twoLT_plus_DR_fits_optimx[[1]]))
 
 twoLT_plus_DR_params_subject <- dplyr::select(twoLT_plus_DR_fits, subject, !!!parameter_names)
@@ -425,11 +428,34 @@ twoLT_plus_DR_params_avg <- as.data.frame(t(colMeans(twoLT_plus_DR_params_subjec
 twoLT_plus_DR_params_scaled_avg <- as.data.frame(t(colMeans(twoLT_plus_DR_params_scaled_subject[parameter_names])))
 ```
 
-```{r GOF, cache=TRUE, dependson="fit"}
+```{r RT_parameters_condition_wise, dependson="fit"}
+detect_params <-
+  select(.data = twoLT_plus_DR_params_scaled_subject,
+         subject, DO_L, FD_L, DN_L, DO_W, FD_W, DN_W, DO_S, FD_S, DN_S) %>%
+  gather(key="param", value="value", -subject) %>%
+  separate(param, c("param", "strength")) %>%
+  spread(param, value)
+
+strength_wise_params <- left_join(detect_params,
+                                  select(.data = twoLT_plus_DR_params_scaled_subject,
+                                         subject, b, mu.d, mu.g, sigma, nu),
+                                  by = "subject"
+                                  )
+
+variables <- setdiff(names(strength_wise_params), c("subject", "strength"))
+condition_wise_params <- bind_rows(mutate(strength_wise_params, speeded_correct = FALSE),
+                                   mutate(strength_wise_params, speeded_correct = TRUE)
+                                   ) %>% 
+  select(subject, strength, speeded_correct, !!!variables)
+```
+
+```{r GOF, dependson="fit"}
 speeded_RT_LL <- speeded_RT_choice_quantiles %>%
   group_by(subject, strength) %>%
   mutate(observed_p = bin_counts/sum(bin_counts)) %>%
   summarise(null_LL = dmultinom(bin_counts, sum(bin_counts), observed_p, log=TRUE)) %>%
+  group_by(subject) %>%
+  summarise(null_LL = sum(null_LL)) %>%
   ungroup()
 
 
@@ -472,7 +498,7 @@ twoLT_plus_DR_GOF_sum <- as.data.frame(t(colSums(twoLT_plus_DR_GOF_subject[c("LL
 
 ```
 
-```{r twoLT_predictions, dependson="2LT_fit"}
+```{r twoLT_predictions, dependson="parameters"}
 twoLT_point_predictions <-
   select(.data = twoLT_plus_DR_params_scaled_subject,
          subject, DO_L, FD_L, DN_L, DO_W, FD_W, DN_W, DO_S, FD_S, DN_S,
@@ -480,7 +506,7 @@ twoLT_point_predictions <-
   gather(-subject, key="parameter", value="value") %>%
   arrange(subject) %>%
   group_by(subject) %>%
-  transmute(x = list(as.data.frame(
+  summarise(x = list(as.data.frame(
       c(pOld = list(c("25%", "50%", "75%")),
         twoLT(setNames(value, parameter))
         ),
@@ -497,30 +523,206 @@ ROC_point_predictions <- bind_rows(obs = obs_ROC_data,
   select(subject, type, strength, pOld, FAR, HR) %>%
   arrange(subject, strength,pOld, type)
 
+ROC_point_predictions_avg <- 
+  group_by(.data = ROC_point_predictions, type, strength, pOld) %>%
+  summarise_at(.vars = c("FAR", "HR"), .funs = "mean") %>%
+  ungroup()
 ```
 
-```{r condition_wise_parameters}
-detect_params <-
-  select(.data = twoLT_plus_DR_params_scaled_subject,
-         subject, DO_L, FD_L, DN_L, DO_W, FD_W, DN_W, DO_S, FD_S, DN_S) %>%
-  gather(key="param", value="value", -subject) %>%
-  separate(param, c("param", "strength")) %>%
-  spread(param, value)
+```{r speeded_accuracy, dependson="RT_parameters_condition_wise"}
 
-strength_wise_params <- left_join(detect_params,
-                                  select(.data = twoLT_plus_DR_params_scaled_subject,
-                                         subject, b, mu.d, mu.g, sigma, nu),
-                                  by = "subject"
-                                  )
+predicted_probabilities <- left_join(condition_wise_params,
+                                     select(speeded_RT_choice_quantiles, -bin_counts),
+                                     by = c("subject", "strength", "speeded_correct")
+                                     ) %>%
+  rowwise() %>%
+  mutate(predicted_p = pDR(rt=value, correct=speeded_correct,
+                           DO, FD, b, mu.d, mu.g, sigma, nu,
+                           reverse = strength == "L")
+         ) %>%
+  ungroup() %>%
+  select(-variables) %>%
+  group_by(subject, strength, speeded_correct) %>%
+  mutate(predicted_p = diff(c(0, predicted_p))) %>%
+  ungroup()
 
-variables <- setdiff(names(strength_wise_params), c("subject", "strength"))
-condition_wise_params <- bind_rows(mutate(strength_wise_params, speeded_correct = FALSE),
-                                   mutate(strength_wise_params, speeded_correct = TRUE)
-                                   ) %>% 
-  select(subject, strength, speeded_correct, !!!variables)
+predicted_acc <- filter(predicted_probabilities, speeded_correct) %>%
+  group_by(subject, strength) %>%
+  summarise(predicted_acc = sum(predicted_p)) %>%
+  ungroup()
+
+accuracy <- bind_rows(twoLT = rename(predicted_acc, acc = predicted_acc),
+                      obs = speeded_acc,
+                      .id = "type"
+                      ) %>%
+  mutate(strength = factor(strength, levels = c("L","W","S")))
 ```
 
-```{r ROC_plots, fig.width=10, fig.height=10, dependson="2LT_fit"}
+```{r speeded_quantiles, dependson="RT_parameters_condition_wise"}
+
+predicted_quantiles <-
+  rowwise(condition_wise_params) %>%
+  mutate(predicted_q = list(as.data.frame(as.list(
+    qDR(p=c(.1, .3, .5, .7, .9, 1),
+        correct = speeded_correct,
+        DO, FD, b, mu.d, mu.g, sigma, nu,
+        reverse = strength == "L"
+        )
+      ),
+    check.names=FALSE)
+    )) %>%
+  ungroup() %>%
+  select(subject, strength, speeded_correct, predicted_q) %>%
+  unnest() %>%
+  gather(key="quantile", value="value", contains("%"), factor_key = TRUE) %>%
+  arrange(subject, strength, speeded_correct)
+
+quantiles <- bind_rows(twoLT = predicted_quantiles,
+                       obs = mutate(select(speeded_RT_choice_quantiles, -bin_counts),
+                                    quantile = factor(quantile)
+                                    ),
+                       .id="type") %>%
+  mutate(strength = factor(strength, levels = c("L","W","S")))
+
+conditional_quantiles_subject <-
+  mutate(accuracy, inc=1-acc) %>%
+  gather(key="speeded_correct", value="p", acc, inc) %>%
+  mutate(speeded_correct = ifelse(speeded_correct=="acc", TRUE, FALSE)) %>%
+  right_join(quantiles,
+             by = c("subject", "strength", "speeded_correct", "type")
+             ) %>%
+  filter(quantile != "100%") %>%
+  mutate(p = p * as.numeric(sub("%", "", quantile, fixed = TRUE))/100) %>%
+  rename(RT = value)
+
+conditional_quantiles_avg <-
+  group_by(.data = conditional_quantiles_subject,
+           type, strength, speeded_correct, quantile
+           ) %>%
+  summarise_at(c("RT","p"), mean) %>%
+  ungroup()
+```
+
+
+```{r save_outputs, eval=isTRUE(getOption('knitr.in.progress'))}
+files_dir <- paste0(tools::file_path_sans_ext(knitr::current_input()),
+                    "_files"
+                    )
+if (!dir.exists(files_dir)) {
+  dir.create(files_dir)
+}
+
+write.csv(twoLT_plus_DR_params_subject,
+          file = file.path(files_dir, "parameters.csv"),
+          row.names = FALSE
+          )
+write.csv(twoLT_plus_DR_params_scaled_subject,
+          file = file.path(files_dir, "scaled_parameters.csv"),
+          row.names = FALSE
+          )
+write.csv(twoLT_plus_DR_GOF_subject,
+          file = file.path(files_dir, "GOF.csv"),
+          row.names = FALSE
+          )
+```
+
+```{r avg_ROC_plot, fig.width=7, fig.height=7, dependson="twoLT_predictions"}
+ggplot(ROC_point_predictions_avg,
+       aes(x=FAR, y=HR,  shape=type, linetype=strength,
+           group=interaction(type, strength))
+       ) +
+  geom_line(size=1) +
+  geom_point(aes(color=pOld), size=2, stroke=1.3) +
+  scale_x_continuous("False Alarm Rate", limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_linetype_discrete("Strength",
+                          labels=c("W" = "Weak",
+                                   "S" = "Strong")) +
+  scale_color_manual("p(Old)", values = c("#d82d2d", "#d8d834", "#17b50c")) +
+  scale_shape_manual("Type",
+                     values=c(16, 4),
+                     breaks = c("obs", "twoLT"),
+                     labels = c("Observed", "Two LT")) +
+  guides(colour = guide_legend(override.aes = list(size = 4)),
+         shape = guide_legend(override.aes = list(size = 4))) +
+  ggtitle("Two LT Model ROC") +
+  theme_bw(base_size = 16) +
+  theme(plot.title = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.width = unit(10,"mm"),
+        legend.position = c(.65, .15),
+        legend.box = "horizontal")
+```
+
+
+```{r QP_plot, fig.width=10, fig.height=7, dependson=c("speeded_quantiles","speeded_accuracy")}
+ggplot(conditional_quantiles_avg,
+       aes(x=RT, y=p, color=speeded_correct, linetype=type, shape=type)) +
+  geom_point(size=2) +
+  geom_line(size=1) +
+  facet_grid(~strength,
+             labeller = as_labeller(c("L" = "Lure", "W" = "Weak", "S" = "Strong"))
+             ) +
+  scale_color_manual("Accuracy",
+                     values = RColorBrewer::brewer.pal(3, 'Set1')[1:2],
+                     breaks=c("FALSE","TRUE"),
+                     labels=c("Incorrect", "Correct")) +
+  scale_linetype_discrete(NULL, labels = c("twoLT" = "Two LT", "obs" = "Observed")) +
+  ggtitle("2LT Discrete Race",
+          subtitle="Conditional Quantiles (Average)") +
+  scale_x_continuous("Response Time (s.)") +
+  guides(shape = FALSE) +
+  theme_bw(base_size=16) +
+  theme(plot.title = element_text(hjust=.5),
+        plot.subtitle = element_text(hjust=.5),
+        strip.background = element_blank()
+        )
+```
+
+```{r param_summary_tables, dependson="parameters"}
+formatted_names_map <- c(subject="Subject", DO_L="DO<sub>L</sub>", FD_L="FD<sub>L</sub>", 
+                         DO_W="DO<sub>W</sub>", FD_W="FD<sub>W</sub>", DO_S="DO<sub>S</sub>",
+                         FD_S="FD<sub>S</sub>", b="b", b_C="b<sub>C</sub>", b_N="b<sub>N</sub>",
+                         b_L="b<sub>L</sub>", mu.d="μ<sub>D</sub>", mu.g="μ<sub>G</sub>",
+                         sigma="\U03C3", nu="v", G2="G<sup>2</sup>", LL="LL", null_LL="Null LL",
+                         df="df", p="p(X<sup>2</sup>)",fevals="fevals", gevals="gevals",
+                         niter="niter", convcode="convcode")
+#"p(X<sup>2</sup><sub>28</sub>)")
+
+left_join(select(twoLT_plus_DR_params_scaled_subject, -starts_with("RO"), -starts_with("DN")),
+          select(twoLT_plus_DR_GOF_subject, subject, G2),
+          by="subject"
+          ) %>%
+  kable(digits=3,
+        col.names = formatted_names_map[names(.)],
+        escape=FALSE) %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::column_spec(1, bold=TRUE)
+```
+
+```{r download_links, results="asis"}
+cat("<ul><li>",
+    paste0('<a  href="', file.path(files_dir, "scaled_parameters.csv"),
+           '">Download Scaled Parameters</a>'
+           ),
+    "</li><li>",
+    paste0('<a href="', file.path(files_dir, "parameters.csv"),
+           '">Download Raw Parameters</a>'
+           ),
+    "</li><li>",
+    paste0('<a href="',
+           file.path(files_dir, "GOF.csv"),
+           '">Download GOF Statistics</a>'
+       ),
+    "</li></ul>",
+    sep=""
+    )
+```
+
+
+## Individual Subjects
+```{r subject_ROC_plots, fig.width=10, fig.height=10, dependson="2LT_predictions"}
 ggplot(ROC_point_predictions,
        aes(x=FAR, y=HR,  shape=type, linetype=strength,
            group=interaction(type, strength))
@@ -551,3 +753,81 @@ ggplot(ROC_point_predictions,
 ```
 
 
+```{r subject_RT_plots, class.output="subject_speeded_RT", fig.width=8.5, fig.align="center", results="asis", dependson=c("parameters","GOF", "twoLT_predictions", "speeded_accuracy", "speeded_quantiles"),}
+
+for (s in unique(speeded_RT_choice_quantiles$subject)) {
+  
+  cat(sprintf("<h3>Subject %s</h3>", s))
+  
+  subject_params <- filter(twoLT_plus_DR_params_scaled_subject, subject == s) %>%
+    select(-subject, -starts_with("RO"), -starts_with("DN"))
+  subject_GOF <- filter(twoLT_plus_DR_GOF_subject, subject == s)[,-1]
+
+  kable(data.frame(Parameter = formatted_names_map[colnames(subject_params)],
+                   Value = unlist(subject_params)
+                   ),
+        digits=3,
+        row.names=FALSE,
+        escape = FALSE) %>%
+    kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+    kableExtra::column_spec(1, bold=TRUE) %>%
+    print()
+  
+    kable(data.frame(Statistic=formatted_names_map[colnames(subject_GOF)],
+                     Value=unlist(subject_GOF)
+                     ),
+        digits = 2,
+        row.names=FALSE,
+        escape = FALSE) %>%
+    kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+    kableExtra::column_spec(1, bold=TRUE) %>%
+    print()
+
+  acc_plot <-
+    ggplot(filter(accuracy, subject == s),
+          aes(y=acc, shape=type, color=strength, group=strength)) +
+    geom_point(aes(x="1"), size=2, stroke=2,
+               position = position_dodge(width=.35)) +
+    scale_shape_manual("",
+                       values = c(16,4),
+                       breaks = c("observed","predicted")
+                       ) +
+    scale_color_discrete("Srength",
+                         labels = c("L" = "Lure",
+                                    "W" = "Weak\nTarget",
+                                    "S" = "Strong\nTarget")
+                         ) +
+    scale_y_continuous("Percent Correct", limits = c(0, 1)) +
+    scale_x_discrete("", labels = "", expand = c(0, .2)) +
+    theme(legend.key.height = unit(9, 'mm'),
+          axis.title.x = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.text.x = element_blank())
+  
+  quantile_plot <- 
+    ggplot(filter(quantiles, subject == s, quantile != "100%"),
+           aes(x=quantile, y=value, shape=type, color=strength)) +
+    geom_point(size=1.5) +
+    geom_line(aes(group=type)) +
+    facet_grid(speeded_correct ~ strength,
+               labeller = labeller(speeded_correct = as_labeller(
+                                    c("TRUE" = "Correct",
+                                      "FALSE" = "Error")
+                                    ),
+                                    strength = as_labeller(
+                                      c("L" = "Lure",
+                                        "S" = "Strong Target",
+                                        "W" = "Weak Target")
+                                    )
+                                   )
+               ) +
+    scale_shape_manual(values=c(16,4),
+                   breaks=c("observed","predicted")
+                   ) +
+    scale_y_continuous("RT Quantile Value (s.)") +
+    guides(color=FALSE, shape=FALSE)
+  
+  gridExtra::grid.arrange(acc_plot, quantile_plot, nrow=1,
+                          widths=c(.27, .73))
+}
+```
