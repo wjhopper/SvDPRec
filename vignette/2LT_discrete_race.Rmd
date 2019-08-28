@@ -459,10 +459,6 @@ write.csv(twoLT_DR_params_scaled_subject,
           file = file.path(files_dir, "scaled_parameters.csv"),
           row.names = FALSE
           )
-write.csv(twoLT_DR_params_subject,
-          file = file.path(files_dir, "parameters.csv"),
-          row.names = FALSE
-          )
 write.csv(twoLT_DR_GOF_subject,
           file = file.path(files_dir, "GOF.csv"),
           row.names = FALSE
