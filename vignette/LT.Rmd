@@ -81,25 +81,44 @@ null_LL <- mutate(delayed_counts_by_sub_bias,
 
 
 ```{r LT}
+
+guess_parameter_scaling <- function(b, reverse=FALSE) {
+  
+  if (abs(b) > 1) {
+    stop("Bias parameter must lie within [-1, 1]")
+  }
+  
+  if (b <= 0) {
+    # Liberal
+    RO_DO <- 1
+    RO_DN <- abs(b)
+  } else {
+    # Conservative
+    RO_DO <-1-b
+    RO_DN <- 0
+  }
+  
+  theta <- c("RO_DN"=RO_DN, "RO_DO"=RO_DO)
+  
+  if (reverse) {
+    theta <- 1-theta
+  }
+  return(theta)
+}
+
 LT_LL <- function(theta, counts) {
   
   FA <- numeric(length(counts$FA))
   HR_W <- numeric(length(counts$H_W))
   HR_S <- numeric(length(counts$H_S))
-  bias <- theta[c('bias.C', 'bias.N', 'bias.L')]
   
-  for (i in 1L:length(bias)) {
-
-      if (bias[i] < 0) {
-        FA[i] <- theta['dNew.L'] * (bias[i] + 1)
-        HR_W[i] <- theta['dOld.W'] * (bias[i] + 1)
-        HR_S[i] <- theta['dOld.S'] * (bias[i] + 1)
-
-      } else {
-        FA[i] <- theta['dNew.L'] + (1 - theta['dNew.L']) * bias[i]
-        HR_W[i] <- theta['dOld.W'] + (1 - theta['dOld.W']) * bias[i]
-        HR_S[i] <- theta['dOld.S'] + (1 - theta['dOld.S']) * bias[i]
-      }
+  theta_names <- names(theta)
+  bias_param_names <- theta_names[startsWith(theta_names, "bias")]
+  for (i in 1:length(bias_param_names)) {
+    RO <- guess_parameter_scaling(unname(theta[bias_param_names[i]]))
+    FA[i] <- theta['dOld.L']*RO["RO_DO"] + (1-theta['dOld.L'])*RO["RO_DN"]
+    HR_W[i] <- theta['dOld.W']*RO["RO_DO"] + (1-theta['dOld.W'])*RO["RO_DN"]
+    HR_S[i] <- theta['dOld.S']*RO["RO_DO"] + (1-theta['dOld.S'])*RO["RO_DN"]
   }
 
 
@@ -107,6 +126,8 @@ LT_LL <- function(theta, counts) {
           dbinom(counts$H_W, size = counts$W_N, prob = HR_W, log=TRUE),
           dbinom(counts$FA, size = counts$L_N, prob = FA, log=TRUE)
           )
+  # print(theta)
+  # print(-sum(LL))
   return(-sum(LL))
 }
 ```
@@ -118,8 +139,8 @@ LT_fits <- foreach(sub = split(delayed_counts_by_sub_bias,
                    .packages = c('optimx')
                    ) %do% {
 
-  fit <- optimx(par = c("dNew.L"=.5, "dOld.W"=.5, "dOld.S"=.75,
-                        bias=c('C'=-.5, 'N'=0, 'L'=.5)
+  fit <- optimx(par = c("dOld.L"=.25, "dOld.W"=.5, "dOld.S"=.5,
+                        bias=c('C'=.5, 'N'=0, 'L'=-.5)
                         ),
                 fn = LT_LL,
                 method = "nlminb",
@@ -137,9 +158,12 @@ LT_fits_df <- bind_rows(LT_fits)
 ```
 
 ```{r parameter_summaries, dependson="fit"}
-LT_params <- select(LT_fits_df, subject, dNew.L:bias.L)
+parameter_names <- colnames(coef(LT_fits[[1]]))
+
+LT_params <- select(LT_fits_df, subject, !!!parameter_names)
+
 LT_params_avg <- summarise_at(LT_params,
-                              .vars = c("dNew.L", "dOld.W", "dOld.S", "bias.C", "bias.N", "bias.L"),
+                              .vars = parameter_names,
                               .funs = "mean"
                               )
 ```
@@ -169,32 +193,32 @@ rm(LT_fits_df)
 ![LT](LT.png)
 
 
-Following [Kellen, Erdfelder, Malmberg, Dubé, & Criss (2016)](https://doi.org/10.1016/j.jmp.2016.03.001)
+Reversing the direction of the bias parameter from [Kellen, Erdfelder, Malmberg, Dubé, & Criss (2016, p. 88)](https://doi.org/10.1016/j.jmp.2016.03.001), such  that lower values are interpreted as more conservative respoinding and higher values are interpreted as more liberal responding (analagous to the criterion parameter in Signal Detection theory):
 
 $$
 p(O \vert O) =  \left\{
   \begin{array}{lr}
-    D_o(b+1), & \text{if } b\lt0\\
-    D_o + (1-D_o)b, & \text{if } b\ge 0 
+    DO_o + (1-DO_o)(b+1), & \text{if } b\le 0\\
+    DO_ob, & \text{if } b\gt0
   \end{array}
 \right.
 \\
 p(O \vert N) =  \left\{
   \begin{array}{lr}
-    D_n(b+1), & \text{if } b\lt0\\
-    D_n + (1-D_n)b, & \text{if } b\ge 0 
+    DO_n + (1-DO_n)(b+1), & \text{if } b\le0\\
+    DO_nb, & \text{if } b\gt 0 
   \end{array}
 \right.
 $$
-with $b = Y_n - Y_o$ and $-1 \le b \le 1$
+with $-1 \le b \le 1$
 
 Conservative "Lower Limb" ROC
 $$
-HR = \frac{D_o}{D_n}FA
+HR = \frac{DO_o}{DO_n}FA
 $$
-Conservative "Lower Limb" ROC
+Liberal "Upper Limb" ROC
 $$
-HR = D_o + \frac{1 -D_o}{1-D_n}(FA - D_n)
+HR = DO_o + \frac{1 -DO_o}{1-DO_n}(FA - DO_n)
 $$
 
 ## Results
@@ -205,11 +229,11 @@ LT_ROC_preds <- rowwise(LT_params) %>%
   mutate(LT = list(
     data.frame(FAR = rep(FAR_points, 2),
                strength = rep(c("W", "S"), each = length(FAR_points)),
-               HR_lower = c( (dOld.W/dNew.L)*FAR_points,
-                             (dOld.S/dNew.L)*FAR_points
+               HR_lower = c( (dOld.W/dOld.L)*FAR_points,
+                             (dOld.S/dOld.L)*FAR_points
                             ),
-               HR_upper = c( dOld.W + (1-dOld.W)/(1-dNew.L)*(FAR_points-dNew.L),
-                             dOld.S + (1-dOld.S)/(1-dNew.L)*(FAR_points-dNew.L)
+               HR_upper = c( dOld.W + (1-dOld.W)/(1-dOld.L)*(FAR_points-dOld.L),
+                             dOld.S + (1-dOld.S)/(1-dOld.L)*(FAR_points-dOld.L)
                             ),    
                type = "pred")
     )) %>%
@@ -223,11 +247,11 @@ LT_ROC_preds_avg <-
          LT = list(
     data.frame(FAR = rep(FAR_points, 2),
                strength = rep(c("W", "S"), each = length(FAR_points)),
-               HR_lower = c( (dOld.W/dNew.L)*FAR_points,
-                             (dOld.S/dNew.L)*FAR_points
+               HR_lower = c( (dOld.W/dOld.L)*FAR_points,
+                             (dOld.S/dOld.L)*FAR_points
                             ),
-               HR_upper = c( dOld.W + (1-dOld.W)/(1-dNew.L)*(FAR_points-dNew.L),
-                             dOld.S + (1-dOld.S)/(1-dNew.L)*(FAR_points-dNew.L)
+               HR_upper = c( dOld.W + (1-dOld.W)/(1-dOld.L)*(FAR_points-dOld.L),
+                             dOld.S + (1-dOld.S)/(1-dOld.L)*(FAR_points-dOld.L)
                             ),    
                type = "pred")
     )) %>%
@@ -287,7 +311,7 @@ ggplot(LT_ROC_preds,
 ```
 
 ```{r tables, cache=TRUE, dependson=c("parameter_summaries", "GOF")}
-param_names_map <- c("subject"="Subject", "dNew.L"="D<sub>n</sub>", "dOld.W"="D<sub>w</sub>",
+param_names_map <- c("subject"="Subject", "dOld.L"="D<sub>n</sub>", "dOld.W"="D<sub>w</sub>",
                      "dOld.S"="D<sub>s</sub>", "bias.C"="b<sub>c</sub>",
                      "bias.N"="b<sub>n</sub>", "bias.L"="b<sub>l</sub>")
 
