@@ -147,7 +147,7 @@ qDR <- function(p, correct, DO, b, mu.o, mu.n, sigma, nu, reverse=FALSE) {
   
   n_samples <- 10000
 
-  n_DO_trials <- max(1, rbinom(1, size = n_samples, p = DO))
+  n_DO_trials <- max(1, DO * n_samples)
   DO_RTs <- c(gamlss.dist::rexGAUS(n_DO_trials, mu = mu.o, sigma = sigma, nu = nu),
               rep(Inf, n_samples - n_DO_trials)
               )
@@ -248,7 +248,7 @@ speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
 LT_DR_fits_optimx <- foreach(sub = split(speeded_RT_choice_quantiles,
                                             speeded_RT_choice_quantiles$subject)
                                 ) %do% {
-    fit <- optimx(par = c("DO_L"=0.01, "DO_W"=0.01, "DO_S"=0.01, "b"= .5,
+    fit <- optimx(par = c("DO_L" = 0.5, "DO_W" = 0.5, "DO_S" = 0.5, "b" = 0,
                           "mu.o" = .5, "mu.n" = .75, "sigma" = .25, "nu" = .25
                           ),
                   fn = DR_obj,
@@ -429,11 +429,14 @@ ggplot(conditional_quantiles_avg,
                      values = RColorBrewer::brewer.pal(3, 'Set1')[1:2],
                      breaks=c("FALSE","TRUE"),
                      labels=c("Incorrect", "Correct")) +
-  scale_linetype_discrete(NULL, labels = c("LT" = "LT", "obs" = "Observed")) +
+  scale_linetype_discrete(NULL, labels = c("LT" = "LT", "obs" = "Observed"),
+                          limits=c("obs", "LT")) +
   ggtitle("LT Discrete Race",
           subtitle="Conditional Quantiles (Average)") +
   scale_x_continuous("Response Time (s.)") +
-  guides(shape = FALSE) +
+  guides(shape = FALSE,
+         linetype = guide_legend(order=1),
+         color = guide_legend(order=0)) +
   theme_bw(base_size=16) +
   theme(plot.title = element_text(hjust=.5),
         plot.subtitle = element_text(hjust=.5),
