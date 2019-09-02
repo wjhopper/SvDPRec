@@ -515,7 +515,7 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
                position = position_dodge(width=.35)) +
     scale_shape_manual("",
                        values = c(16,4),
-                       breaks = c("observed","predicted")
+                       limits = c("obs","LT")
                        ) +
     scale_color_discrete("Srength",
                          labels = c("L" = "Lure",
@@ -547,8 +547,8 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
                                    )
                ) +
     scale_shape_manual(values=c(16,4),
-                   breaks=c("observed","predicted")
-                   ) +
+                       limits=c("obs","LT")
+                       ) +
     scale_y_continuous("RT Quantile Value (s.)") +
     guides(color=FALSE, shape=FALSE)
   
