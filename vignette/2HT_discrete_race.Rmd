@@ -1,5 +1,5 @@
 ---
-title: "Discrete Race Model Fits"
+title: "Discrete Race, Two High Threshold Architecture"
 author: "William Hopper"
 date: "`r format(Sys.Date(), '%b %d, %Y')`"
 output:
