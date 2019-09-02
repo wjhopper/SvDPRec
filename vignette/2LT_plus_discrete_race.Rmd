@@ -176,6 +176,7 @@ parameter_scaling <- function(theta) {
   # Compute response probabilities from each detect state based on bias parameter
   bias_param_ind <- startsWith(names(theta), "b")
   rescaled_bias_params <- -1 + ilogit(x = theta[bias_param_ind], max=3)
+  theta[bias_param_ind] <- rescaled_bias_params
   RO_params <- calculate_RO_parameters(rescaled_bias_params)
   
   # Add new vector elements for the parameters that are computed based on existing ones.
