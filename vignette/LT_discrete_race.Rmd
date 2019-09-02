@@ -445,13 +445,13 @@ ggplot(conditional_quantiles_avg,
 ```{r param_summary_tables}
 formatted_names_map <- c(subject="Subject", DO_L="DO<sub>L</sub>", FD_L="FD<sub>L</sub>", 
                          DO_W="DO<sub>W</sub>", FD_W="FD<sub>W</sub>", DO_S="DO<sub>S</sub>",
-                         FD_S="FD<sub>S</sub>", b="b", mu.d="μ<sub>D</sub>", mu.g="μ<sub>G</sub>",
+                         FD_S="FD<sub>S</sub>", b="b", mu.o="μ<sub>O</sub>", mu.n="μ<sub>N</sub>",
                          sigma="\U03C3", nu="v", G2="G<sup>2</sup>", LL="LL", null_LL="Null LL",
                          df="df", p="p(X<sup>2</sup>)",fevals="fevals", gevals="gevals",
                          niter="niter", convcode="convcode")
 #"p(X<sup>2</sup><sub>28</sub>)")
 
-left_join(LT_DR_params_scaled_subject,
+left_join(LT_DR_params_subject,
           select(LT_DR_GOF_subject, subject, G2),
           by="subject"
           ) %>%
@@ -485,7 +485,7 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
   
   cat(sprintf("<h3>Subject %s</h3>", s))
   
-  subject_params <- filter(LT_DR_params_scaled_subject, subject == s)[,-1]
+  subject_params <- filter(LT_DR_params_subject, subject == s)[,-1]
   subject_GOF <- filter(LT_DR_GOF_subject, subject == s)[,-1]
 
   kable(data.frame(Parameter = formatted_names_map[colnames(subject_params)],
