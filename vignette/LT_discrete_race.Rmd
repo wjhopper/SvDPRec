@@ -1,0 +1,559 @@
+---
+title: "Discrete Race Model, Low-Threshold Architecture"
+author: "William Hopper"
+date: "`r format(Sys.Date(), '%b %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
+library(gamlss.dist)
+library(rprojroot)
+library(kableExtra)
+library(optimx)
+library(foreach)
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+root_dir <- rprojroot::is_rstudio_project$find_file()
+```
+
+```{css css}
+.main-container{
+  max-width: 1200px;
+}
+```
+
+```{r discrete_race_exgaussians, cache=TRUE}
+## mu, sigma & nu should be vectors of length 2
+## First element should be parameter for detect distribution
+## Second element should be parameter for guess distribution
+
+## Weight is a vector of length 4
+## First element is probability of "detect old" being available
+## Second element is probability of "detect old" being unavailable, aka the detect new probability
+## Third element is probability of responding correctly given detect old
+## Fourth element is probability of responding correctly given detect new
+
+dcRT <- function(x, mu, sigma, nu, weights) {
+  
+  pDetect_Old <- weights[1]
+  pDetect_New <- weights[2]
+  pGuess_Correct <- weights[3:4]
+  
+  p_DO_unfinished <- gamlss.dist::pexGAUS(x, mu[1], sigma[1], nu[1], lower.tail = FALSE)
+  p_DN_unfinished <- gamlss.dist::pexGAUS(x, mu[2], sigma[2], nu[2], lower.tail = FALSE)
+  
+  DO_RT_density <- gamlss.dist::dexGAUS(x, mu[1], sigma[1], nu[1])
+  DN_RT_density <- gamlss.dist::dexGAUS(x, mu[2], sigma[2], nu[2])
+  
+  # Detect Old Available, Wins
+  DO_win <- pDetect_Old * p_DN_unfinished * pGuess_Correct[2] * DO_RT_density
+  # Detect Old Available, Loses
+  DO_loss <- pDetect_Old * p_DO_unfinished * pGuess_Correct[1] * DN_RT_density
+  # Detect New Pathway
+  DN <- pDetect_New * pGuess_Correct[1] * DN_RT_density 
+
+  
+  correct_RT_density <- DO_win + DO_loss + DN
+  return(correct_RT_density)
+}
+
+## Inputs are the same for the error RT distribution.
+## Since either detect state can lead to either output, the equations for the errors RTs are the same 
+## just with the bias parameters are reversed. So, we just use the probability as responding 
+## incorrectly as the reponse weights.
+
+deRT <- function(x, mu, sigma, nu, weights) {
+  weights[3:4] <- 1 - weights[3:4]
+  incorrect_RT_density <- dcRT(x, mu, sigma, nu, weights)
+  return(incorrect_RT_density)
+}
+```
+
+```{r discrete_race_objective_functions, cache=TRUE}
+
+guess_parameter_scaling <- function(b, reverse=FALSE) {
+  
+  if (abs(b) > 1) {
+    stop("Bias parameter must lie within [-1, 1]")
+  }
+  
+  if (b <= 0) {
+    # Liberal
+    RO_DO <- 1
+    RO_DN <- abs(b)
+  } else {
+    # Conservative
+    RO_DO <-1-b
+    RO_DN <- 0
+  }
+  
+  theta <- c("RO_DN"=RO_DN, "RO_DO"=RO_DO)
+  
+  if (reverse) {
+    theta <- 1-theta
+  }
+  return(theta)
+}
+
+
+pDR <- function(rt, correct, DO, b, mu.o, mu.n, sigma, nu, reverse=FALSE) {
+
+  weights <- c("DO"=DO, "DN"=1-DO, guess_parameter_scaling(b, reverse))
+
+  n_correct <- length(correct)
+  n_rt <-  length(rt)
+  
+  if (n_correct != n_rt) {
+    if (n_correct == 1) {
+      correct <- rep(correct, n_rt)
+    } else {
+      stop("Length of 'correct' argument vector must be 1, or match length of 'rt' argument vector.")
+    }
+  }
+  
+  p <- numeric(length=n_rt)
+  for (i in 1:length(p)) {
+    
+    if (correct[i]) {
+      density_fn = dcRT
+    } else {
+      density_fn = deRT
+    }
+
+    x <- integrate(density_fn, 0, rt[i],
+                   mu = c(mu.o, mu.n),
+                   sigma = c(sigma, sigma),
+                   nu = c(nu, nu),
+                   weights = weights
+                   )
+    p[i] <- x$value
+  }
+
+  return(p)
+}
+
+
+qDR <- function(p, correct, DO, b, mu.o, mu.n, sigma, nu, reverse=FALSE) {
+
+  weights <- c("DO"=DO, guess_parameter_scaling(b, reverse))
+  names(weights)[(length(weights)-1):length(weights)] <- c("GC_DN", "GC_DO")
+  
+  n_samples <- 10000
+
+  n_DO_trials <- max(1, rbinom(1, size = n_samples, p = DO))
+  DO_RTs <- c(gamlss.dist::rexGAUS(n_DO_trials, mu = mu.o, sigma = sigma, nu = nu),
+              rep(Inf, n_samples - n_DO_trials)
+              )
+  DN_RTs <- gamlss.dist::rexGAUS(n_samples, mu = mu.n, sigma = sigma, nu = nu)
+
+  RTs <- pmin(DO_RTs, DN_RTs)
+  DO_wins <- DO_RTs == RTs
+  N_DO_wins <- sum(DO_wins)
+  
+  accuracy <- logical(n_samples)
+  accuracy[DO_wins] <- as.logical(rbinom(N_DO_wins, 1, weights["GC_DO"]))
+  accuracy[!DO_wins] <- as.logical(rbinom(n_samples - N_DO_wins, 1, weights["GC_DN"]))
+
+  if (correct) {
+    q <- quantile(RTs[accuracy], p)
+  } else {
+    q <- quantile(RTs[!accuracy], p)
+  }
+  
+  return(q)
+}
+
+
+DR_obj <- function(theta, data, fixed=NULL) {
+
+  theta <- c(theta, fixed)
+  
+  log_likelihood <- 0
+  
+  for (strength in unique(data$strength)) {
+
+    condition_index <- data$strength==strength
+    DO <- theta[paste0("DO_", strength)]
+    DN <- 1-DO
+
+    # Correct RTs
+    correct_index <- data$speeded_correct & condition_index
+    rt_cutpoints <- data$value[correct_index]
+    rt_cutpoints[length(rt_cutpoints)] <- Inf
+
+    p_cor <- pDR(rt = rt_cutpoints, correct = TRUE,
+                 DO = DO, b = theta["b"],
+                 mu.o = theta["mu.o"], mu.n=theta["mu.n"],
+                 sigma = theta["sigma"], nu=theta["nu"],
+                 reverse = strength == "L"
+                 )
+
+    # Error RTs
+    error_index <- !data$speeded_correct & condition_index
+    rt_cutpoints <- data$value[error_index]
+    rt_cutpoints[length(rt_cutpoints)] <- Inf
+
+    p_err <- pDR(rt = rt_cutpoints, correct = FALSE,
+                 DO = DO, b = theta["b"],
+                 mu.o = theta["mu.o"], mu.n=theta["mu.n"],
+                 sigma = theta["sigma"], nu=theta["nu"],
+                 reverse = strength == "L"
+                 )
+    
+    predicted_p <- c(diff(c(0, p_cor)), diff(c(0, p_err)))
+    invalid_p <- predicted_p <= 0
+    if (any(invalid_p))  {
+      predicted_p[invalid_p] <- 1e-10
+    }
+
+    bin_counts <- c(data$bin_counts[correct_index], data$bin_counts[error_index])
+    
+    log_likelihood <- log_likelihood + dmultinom(x = bin_counts, size = sum(bin_counts),
+                                                 prob = predicted_p,
+                                                 log = TRUE)
+  }
+  
+  return(-log_likelihood)
+}
+```
+
+```{r load_data}
+load(file.path(root_dir, "data", "SvDPRec.Rdata"))
+test <- dplyr::select(test, -list)
+```
+
+```{r observed_RT_choice_data}
+speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
+  filter(speeded_RT > 200) %>%
+  mutate(speeded_RT = speeded_RT/1000) %>%
+  group_by(subject, strength, speeded_correct) %>%
+  summarise(quintiles = list(
+              data.frame(quantile = c("10%", "30%", "50%", "70%", "90%", "100%"),
+                         value = quantile(speeded_RT, c(.1, .3, .5, .7, .9, 1)),
+                         bin_counts = floor(n() * c(.1, .2, .2, .2, .2, .1))
+                         )
+              )) %>%
+  ungroup() %>%
+  unnest()
+```
+
+```{r fit, cache=TRUE, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions")}
+LT_DR_fits_optimx <- foreach(sub = split(speeded_RT_choice_quantiles,
+                                            speeded_RT_choice_quantiles$subject)
+                                ) %do% {
+    fit <- optimx(par = c("DO_L"=0.01, "DO_W"=0.01, "DO_S"=0.01, "b"= .5,
+                          "mu.o" = .5, "mu.n" = .75, "sigma" = .25, "nu" = .25
+                          ),
+                  fn = DR_obj,
+                  method = "nlminb",
+                  itnmax = 3000,
+                  lower = c(0, 0, 0, -1, 0.01, 0.01, .01, .01),
+                  upper = c(1, 1, 1,  1, 2,    2,    .5,  .75),
+                  control = list(kkt=FALSE),
+                  data = sub)
+
+    fit$subject <- sub$subject[1]
+    fit
+  }
+
+LT_DR_fits <- bind_rows(LT_DR_fits_optimx)
+```
+
+```{r parameters}
+parameter_names <- colnames(coef(LT_DR_fits_optimx[[1]]))
+
+LT_DR_params_subject <- dplyr::select(LT_DR_fits, subject, !!!parameter_names)
+
+LT_DR_params_avg <- as.data.frame(t(colMeans(LT_DR_params_subject[parameter_names])))
+```
+
+```{r GOF}
+null_LL <- speeded_RT_choice_quantiles %>%
+  group_by(subject, strength, speeded_correct) %>%
+  mutate(p = bin_counts/sum(bin_counts)) %>%
+  group_by(subject, strength) %>%
+  mutate(marginal_p = p*c(rep(sum(bin_counts[!speeded_correct])/sum(bin_counts), 6),
+                          rep(sum(bin_counts[speeded_correct])/sum(bin_counts), 6))
+         ) %>%
+  summarise(LL = dmultinom(bin_counts, sum(bin_counts), marginal_p, log=TRUE)) %>%
+  group_by(subject) %>%
+  summarise(null_LL = sum(LL))
+
+LT_DR_GOF_subject <- dplyr::select(.data=LT_DR_fits,
+                                      subject, value, fevals, gevals, niter, convcode) %>%
+  mutate(LL = -value) %>%
+  left_join(x = .,  y = null_LL,
+            by = "subject") %>%
+  mutate(G2 = -2*(LL - null_LL),
+         df = 33 - length(parameter_names),
+         p = pchisq(G2, df = df, lower.tail = FALSE)
+         ) %>%
+  dplyr::select(subject, LL, null_LL, G2, df, p, fevals, gevals, niter, convcode)
+
+LT_DR_GOF_sum <- as.data.frame(t(colSums(LT_DR_GOF_subject[c("LL", "null_LL", "G2", "df")]))) %>%
+  mutate(p = pchisq(G2, df = df, lower.tail = FALSE))
+```
+
+```{r condition_wise_parameters}
+detect_params <-
+  dplyr::select(LT_DR_params_subject, subject, contains("_")) %>%
+  gather(key="param", value="value", -subject) %>%
+  separate(param, c("param", "strength")) %>%
+  spread(param, value)
+
+strength_wise_params <- left_join(detect_params,
+                                  dplyr::select(LT_DR_params_subject, -contains("_")),
+                                  by = "subject"
+                                  )
+
+variables <- setdiff(names(strength_wise_params), c("subject", "strength"))
+condition_wise_params <- bind_rows(mutate(strength_wise_params, speeded_correct = FALSE),
+                                   mutate(strength_wise_params, speeded_correct = TRUE)
+                                   ) %>% 
+  dplyr::select(subject, strength, speeded_correct, !!!variables)
+```
+
+
+```{r predicted_accuracy, cache=TRUE, dependson="fit"}
+
+predicted_probabilities <- left_join(condition_wise_params,
+                                     dplyr::select(speeded_RT_choice_quantiles, -bin_counts),
+                                     by = c("subject", "strength", "speeded_correct")
+                                     ) %>%
+  rowwise() %>%
+  mutate(predicted_p = pDR(rt=value, correct=speeded_correct,
+                           DO, b, mu.o, mu.n, sigma, nu,
+                           reverse = strength == "L")
+         ) %>%
+  ungroup() %>%
+  dplyr::select(-variables) %>%
+  group_by(subject, strength, speeded_correct) %>%
+  mutate(predicted_p = diff(c(0, predicted_p))) %>%
+  ungroup()
+
+predicted_acc <- filter(predicted_probabilities, speeded_correct) %>%
+  group_by(subject, strength) %>%
+  summarise(predicted_acc = sum(predicted_p)) %>%
+  ungroup()
+
+observed_acc <- group_by(speeded_RT_choice_quantiles,
+                         subject, strength) %>%
+  summarise(acc = sum(bin_counts[speeded_correct])/sum(bin_counts)) %>%
+  ungroup()
+
+accuracy <- bind_rows(LT = rename(predicted_acc, acc = predicted_acc),
+                      obs = observed_acc,
+                      .id = "type"
+                      ) %>%
+  mutate(strength = factor(strength, levels = c("L","W","S")))
+```
+
+```{r predicted_quantiles, cache=TRUE, dependson="fit"}
+
+predicted_quantiles <-
+  rowwise(condition_wise_params) %>%
+  mutate(predicted_q = list(as.data.frame(as.list(
+    qDR(p=c(.1, .3, .5, .7, .9, 1),
+        correct = speeded_correct,
+        DO, b, mu.o, mu.n, sigma, nu,
+        reverse = strength == "L"
+        )
+      ),
+    check.names=FALSE)
+    )) %>%
+  ungroup() %>%
+  dplyr::select(subject, strength, speeded_correct, predicted_q) %>%
+  unnest() %>%
+  gather(key="quantile", value="value", contains("%"), factor_key = TRUE) %>%
+  arrange(subject, strength, speeded_correct)
+
+quantiles <- bind_rows(LT = predicted_quantiles,
+                       obs = dplyr::select(speeded_RT_choice_quantiles, -bin_counts),
+                       .id="type") %>%
+  mutate(strength = factor(strength, levels = c("L","W","S")))
+
+conditional_quantiles_subject <-
+  mutate(accuracy, inc=1-acc) %>%
+  gather(key="speeded_correct", value="p", acc, inc) %>%
+  mutate(speeded_correct = ifelse(speeded_correct=="acc", TRUE, FALSE)) %>%
+  right_join(quantiles,
+             by = c("subject", "strength", "speeded_correct", "type")
+             ) %>%
+  filter(quantile != "100%") %>%
+  mutate(p = p * as.numeric(sub("%", "", quantile, fixed = TRUE))/100) %>%
+  rename(RT = value)
+
+conditional_quantiles_avg <-
+  group_by(.data = conditional_quantiles_subject,
+           type, strength, speeded_correct, quantile
+           ) %>%
+  summarise_at(c("RT","p"), mean) %>%
+  ungroup()
+```
+
+```{r save_outputs, eval=isTRUE(getOption('knitr.in.progress'))}
+files_dir <- paste0(tools::file_path_sans_ext(knitr::current_input()),
+                    "_files"
+                    )
+if (!dir.exists(files_dir)) {
+  dir.create(files_dir)
+}
+
+write.csv(LT_DR_params_subject,
+          file = file.path(files_dir, "parameters.csv"),
+          row.names = FALSE
+          )
+
+write.csv(LT_DR_GOF_subject,
+          file = file.path(files_dir, "GOF.csv"),
+          row.names = FALSE
+          )
+```
+
+```{r qp_plot, fig.width=10, fig.height=7}
+ggplot(conditional_quantiles_avg,
+       aes(x=RT, y=p, color=speeded_correct, linetype=type, shape=type)) +
+  geom_point(size=2) +
+  geom_line(size=1) +
+  facet_grid(~strength,
+             labeller = as_labeller(c("L" = "Lure", "W" = "Weak", "S" = "Strong"))
+             ) +
+  scale_color_manual("Accuracy",
+                     values = RColorBrewer::brewer.pal(3, 'Set1')[1:2],
+                     breaks=c("FALSE","TRUE"),
+                     labels=c("Incorrect", "Correct")) +
+  scale_linetype_discrete(NULL, labels = c("LT" = "LT", "obs" = "Observed")) +
+  ggtitle("LT Discrete Race",
+          subtitle="Conditional Quantiles (Average)") +
+  scale_x_continuous("Response Time (s.)") +
+  guides(shape = FALSE) +
+  theme_bw(base_size=16) +
+  theme(plot.title = element_text(hjust=.5),
+        plot.subtitle = element_text(hjust=.5),
+        strip.background = element_blank()
+        )
+```
+
+
+```{r param_summary_tables}
+formatted_names_map <- c(subject="Subject", DO_L="DO<sub>L</sub>", FD_L="FD<sub>L</sub>", 
+                         DO_W="DO<sub>W</sub>", FD_W="FD<sub>W</sub>", DO_S="DO<sub>S</sub>",
+                         FD_S="FD<sub>S</sub>", b="b", mu.d="μ<sub>D</sub>", mu.g="μ<sub>G</sub>",
+                         sigma="\U03C3", nu="v", G2="G<sup>2</sup>", LL="LL", null_LL="Null LL",
+                         df="df", p="p(X<sup>2</sup>)",fevals="fevals", gevals="gevals",
+                         niter="niter", convcode="convcode")
+#"p(X<sup>2</sup><sub>28</sub>)")
+
+left_join(LT_DR_params_scaled_subject,
+          select(LT_DR_GOF_subject, subject, G2),
+          by="subject"
+          ) %>%
+  kable(digits=3,
+        col.names = formatted_names_map[names(.)],
+        escape=FALSE) %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::column_spec(1, bold=TRUE)
+```
+
+```{r download_links, results="asis"}
+cat("<ul><li>",
+    paste0('<a href="', file.path(files_dir, "parameters.csv"),
+           '">Download Raw Parameters</a>'
+           ),
+    "</li><li>",
+    paste0('<a href="',
+           file.path(files_dir, "GOF.csv"),
+           '">Download GOF Statistics</a>'
+       ),
+    "</li></ul>",
+    sep=""
+    )
+```
+
+
+## Individual Subjects
+```{r subject_plots, cache=TRUE, fig.width=8.5, fig.align="center", results="asis", dependson="fit"}
+
+for (s in unique(speeded_RT_choice_quantiles$subject)) {
+  
+  cat(sprintf("<h3>Subject %s</h3>", s))
+  
+  subject_params <- filter(LT_DR_params_scaled_subject, subject == s)[,-1]
+  subject_GOF <- filter(LT_DR_GOF_subject, subject == s)[,-1]
+
+  kable(data.frame(Parameter = formatted_names_map[colnames(subject_params)],
+                   Value = unlist(subject_params)
+                   ),
+        digits=3,
+        row.names=FALSE,
+        escape = FALSE) %>%
+    kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+    kableExtra::column_spec(1, bold=TRUE) %>%
+    print()
+  
+    kable(data.frame(Statistic=formatted_names_map[colnames(subject_GOF)],
+                     Value=unlist(subject_GOF)
+                     ),
+        digits = c(2,2,2,0,3,0,0,0,0),
+        row.names=FALSE,
+        escape = FALSE) %>%
+    kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+    kableExtra::column_spec(1, bold=TRUE) %>%
+    print()
+
+  acc_plot <-
+    ggplot(filter(accuracy, subject == s),
+          aes(y=acc, shape=type, color=strength, group=strength)) +
+    geom_point(aes(x="1"), size=2, stroke=2,
+               position = position_dodge(width=.35)) +
+    scale_shape_manual("",
+                       values = c(16,4),
+                       breaks = c("observed","predicted")
+                       ) +
+    scale_color_discrete("Srength",
+                         labels = c("L" = "Lure",
+                                    "W" = "Weak\nTarget",
+                                    "S" = "Strong\nTarget")
+                         ) +
+    scale_y_continuous("Percent Correct", limits = c(0, 1)) +
+    scale_x_discrete("", labels = "", expand = c(0, .2)) +
+    theme(legend.key.height = unit(9, 'mm'),
+          axis.title.x = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.text.x = element_blank())
+  
+  quantile_plot <- 
+    ggplot(filter(quantiles, subject == s, quantile != "100%"),
+           aes(x=quantile, y=value, shape=type, color=strength)) +
+    geom_point(size=1.5) +
+    geom_line(aes(group=type)) +
+    facet_grid(speeded_correct ~ strength,
+               labeller = labeller(speeded_correct = as_labeller(
+                                    c("TRUE" = "Correct",
+                                      "FALSE" = "Error")
+                                    ),
+                                    strength = as_labeller(
+                                      c("L" = "Lure",
+                                        "S" = "Strong Target",
+                                        "W" = "Weak Target")
+                                    )
+                                   )
+               ) +
+    scale_shape_manual(values=c(16,4),
+                   breaks=c("observed","predicted")
+                   ) +
+    scale_y_continuous("RT Quantile Value (s.)") +
+    guides(color=FALSE, shape=FALSE)
+  
+  gridExtra::grid.arrange(acc_plot, quantile_plot, nrow=1,
+                          widths=c(.27, .73))
+}
+```
+
