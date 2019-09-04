@@ -9,7 +9,7 @@ output:
 editor_options: 
   chunk_output_type: console
 ---
-```{css css}
+```{css css, echo=FALSE}
 .main-container {
     max-width: 1100px;
   }
@@ -87,7 +87,7 @@ null_LL <- mutate(delayed_counts_by_sub_bias,
 
 ## Hierarchical Bayesian Estimation
 ### Will's Stan Model
-```{stan stan_model_external, eval=FALSE, echo=TRUE, output.var='modelstring', code=readLines(file.path(root_dir, "R","2HT.stan"))}
+```{stan stan_model_external, cache=FALSE, eval=FALSE, echo=TRUE, output.var='modelstring', code=readLines(file.path(root_dir, "R","2HT.stan"))}
 ```
 
 ```{r stan_model, results="hide", dependson="cell_counts", cache.extra = tools::md5sum(file.path(root_dir, "R","2HT.stan"))}
