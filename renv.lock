@@ -7,7 +7,7 @@
     "Repositories": [
       {
         "Name": "CRAN",
-        "URL": "https://mirrors.nics.utk.edu/cran/"
+        "URL": "https://mirrors.nics.utk.edu/cran"
       }
     ]
   },
