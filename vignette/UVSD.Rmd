@@ -19,14 +19,14 @@ editor_options:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, fig.align = "center", cache = TRUE)
 library(rprojroot)
-library(dplyr)
-library(tidyr)
-library(ggplot2)
 library(kableExtra)
 library(optimx)
 library(foreach)
 library(rstan)
 library(tidybayes)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
 rstan_options(auto_write = TRUE)
 options(mc.cores = parallel::detectCores())
 root_dir <- rprojroot::is_rstudio_project$find_file()
@@ -353,7 +353,7 @@ fit <- stan(file = file.path(root_dir, "R","UVSD.stan"),
 ```
 
 ```{r Stan_parameter_summaries, cache=TRUE, dependson=c("stan_model")}
-posterior <- as.data.frame(extract(fit))
+posterior <- as.data.frame(rstan::extract(fit))
 
 ## Subject level parameters
 sub_level_params <- select(posterior, contains("_sub")) %>%
