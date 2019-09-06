@@ -4,11 +4,10 @@ description: >
   Analysis reports for SvDPRec dataset.
 baseurl: "/SvDPRec" # the subpath of your site, e.g. /blog
 url: "" # the base hostname & protocol for your site
-github_username:  wjhopper/SvDPRec
+github_username:  wjhopper
 
 # Build settings
 markdown: kramdown
 theme: minima
 
 exclude: [packrat, renv, vignette, R, src]
-
