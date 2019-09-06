@@ -41,7 +41,7 @@ render_all <- function(report_dir="vignette", exclude="joint_diffusion.Rmd") {
 }
 
 
-deploy_to_ghpages <- function(report_dir="vignette", exclude="joint_diffusion.Rmd") {
+commit_to_ghpages <- function(report_dir="vignette", exclude="joint_diffusion.Rmd") {
   
   root_dir <- rprojroot::is_rstudio_project$find_file()
   report_files <- render_all(report_dir, exclude)
@@ -63,9 +63,14 @@ deploy_to_ghpages <- function(report_dir="vignette", exclude="joint_diffusion.Rm
   }
 
   sha <- system("git rev-parse --short HEAD", intern = TRUE, wait=TRUE)
-  system("git checkout -b gh-pages")
-  system(paste0("git add ", files_to_commit, collapse = " "), wait = TRUE)
-  system(sprintf("git commit -m 'Updating from %s'", sha), wait = TRUE)
+  branch_switch_status <- system("git checkout gh-pages", intern = TRUE, wait=TRUE)
+  if (!is.null(attr(branch_switch_status, "status"))) {
+    msg <- paste0(branch_switch_status, collapse = "\n")
+    stop(msg)
+  }
+  system(paste0("git add ", paste0(files_to_commit, collapse = " ")), wait = TRUE)
+  system(sprintf('git commit -m "Updating from %s"', sha), wait = TRUE)
+  system("git checkout master")
     
 }
 
