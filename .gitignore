@@ -1,0 +1,14 @@
+README.md
+.Rdata
+.Rhistory
+.Rprofile
+.Rproj.user/
+SvDPRec.Rproj
+.R/
+packrat/
+renv/
+renv.lock
+data/
+vignette/
+R/
+src/
