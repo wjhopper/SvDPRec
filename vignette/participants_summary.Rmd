@@ -16,7 +16,7 @@ editor_options:
 </style>
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center", cache = TRUE)
 library(rprojroot)
 library(dplyr)
 library(tidyr)
