@@ -2,7 +2,7 @@
 title: SvDPRec
 description: >
   Analysis reports for SvDPRec dataset.
-baseurl: "" # the subpath of your site, e.g. /blog
+baseurl: "/SvDPRec" # the subpath of your site, e.g. /blog
 url: "" # the base hostname & protocol for your site
 github_username:  wjhopper/SvDPRec
 
