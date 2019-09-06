@@ -12,7 +12,7 @@ layout: default
         <li>
           <!--<span class="post-meta">{{ post.date | date: "%b %-d, %Y" }}</span>-->
           <h2>
-            <a class="post-link" href="{{ f.path | prepend: site.baseurl}}">{{ f.path }}</a>
+            <a class="post-link" href="{{ f.path | prepend: site.baseurl}}">{{ f.basename }}</a>
           </h2>
         </li>
       {% endif %}
