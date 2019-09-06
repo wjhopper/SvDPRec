@@ -1,0 +1,22 @@
+---
+layout: default
+---
+
+<div class="home">
+
+  <h1 class="page-heading">Reports</h1>
+
+  <ul class="post-list">
+    {% for f in site.static_files %}
+      {% if f.extname == ".html"%}
+        <li>
+          <!--<span class="post-meta">{{ post.date | date: "%b %-d, %Y" }}</span>-->
+          <h2>
+            <a class="post-link" href="{{ f.path }}">{{ f.path | escape | prepend: site.baseurl}}</a>
+          </h2>
+        </li>
+      {% endif %}
+    {% endfor %}
+  </ul>
+
+</div>

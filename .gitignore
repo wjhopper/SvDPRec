@@ -12,3 +12,7 @@ data/
 vignette/
 R/
 src/
+_site
+.sass-cache
+.jekyll-metadata
+
