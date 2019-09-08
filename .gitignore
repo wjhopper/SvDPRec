@@ -7,3 +7,5 @@ packrat/lib*/
 *.html
 *.rds
 src/libs/
+.sass-cache/
+_site/
