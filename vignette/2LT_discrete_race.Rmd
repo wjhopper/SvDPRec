@@ -173,14 +173,13 @@ pDR <- function(rt, correct, DO, FD, b, mu.do, mu.g, mu.dn, sigma, nu, reverse=F
 
 qDR <- function(p, correct, DO, FD, b, mu.do, mu.g, mu.dn, sigma, nu, reverse=FALSE) {
 
-  weights <- c("DO"=DO, "FD"=FD, "DN"=(1-DO-FD),
-               guess_parameter_scaling(b, reverse)
-               )
-  names(weights)[(length(weights)-2):length(weights)] <- c("GC_DN", "GC_FD", "GC_DO")
+  DN <- 1-DO-FD
+  weights <- guess_parameter_scaling(b, reverse)
+  names(weights) <- c("GC_DN", "GC_FD", "GC_DO")
   
   n_samples <- 10000
   
-  N_DO_trials <- round(weights["DO"]*n_samples)
+  N_DO_trials <- round(DO*n_samples)
   
   if (N_DO_trials == 0) {
     DO_RTs <- rep(Inf, n_samples)
@@ -192,7 +191,7 @@ qDR <- function(p, correct, DO, FD, b, mu.do, mu.g, mu.dn, sigma, nu, reverse=FA
                 )
   }
 
-  N_DN_trials <- round(weights["DN"]*n_samples)
+  N_DN_trials <- round(DN*n_samples)
   if (N_DN_trials == 0) {
     DN_RTs <- rep(Inf, n_samples)
   } else {
@@ -203,7 +202,6 @@ qDR <- function(p, correct, DO, FD, b, mu.do, mu.g, mu.dn, sigma, nu, reverse=FA
                 )
   }
 
-  
   guess_RTs <- gamlss.dist::rexGAUS(n_samples, mu = mu.g, sigma = sigma, nu = nu)
 
   RTs <- pmin(DO_RTs, DN_RTs, guess_RTs)
