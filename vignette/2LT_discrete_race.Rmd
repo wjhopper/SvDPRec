@@ -45,22 +45,26 @@ dcRT <- function(x, mu, sigma, nu, weights) {
   pDetect_New <- weights[3]
   pGuess_Correct <- weights[4:6]
   
-  p_detect_process_unfinished <- gamlss.dist::pexGAUS(x, mu[1], sigma[1], nu[1], lower.tail = FALSE)
+  p_DO_process_unfinished <- gamlss.dist::pexGAUS(x, mu[1], sigma[1], nu[1], lower.tail = FALSE)
   p_guess_process_unfinished <- gamlss.dist::pexGAUS(x, mu[2], sigma[2], nu[2], lower.tail = FALSE)
+  p_DN_process_unfinished <- gamlss.dist::pexGAUS(x, mu[3], sigma[3], nu[3], lower.tail = FALSE)
   
-  detect_RT_density <- gamlss.dist::dexGAUS(x, mu[1], sigma[1], nu[1])
+  DO_RT_density <- gamlss.dist::dexGAUS(x, mu[1], sigma[1], nu[1])
   guess_RT_density <- gamlss.dist::dexGAUS(x, mu[2], sigma[2], nu[2])
+  DN_RT_density <- gamlss.dist::dexGAUS(x, mu[3], sigma[3], nu[3])
   
   # Detect Old Pathway
-  DO <- pDetect_Old * p_guess_process_unfinished * detect_RT_density * pGuess_Correct[3]
+  DO <- pDetect_Old * p_guess_process_unfinished * DO_RT_density * pGuess_Correct[3]
   # Detect New Pathway
-  DN <- pDetect_New * p_guess_process_unfinished * detect_RT_density * pGuess_Correct[1]
+  DN <- pDetect_New * p_guess_process_unfinished * DN_RT_density * pGuess_Correct[1]
   # Fail to Detect pathway, detection unavailable
   FD <- pFail * guess_RT_density * pGuess_Correct[2]
-  # Fail to Detect pathway, guessing wins
-  FD_win <- (pDetect_Old + pDetect_New) * p_detect_process_unfinished * guess_RT_density * pGuess_Correct[2]
+  # Fail to Detect pathway, guessing beats detect old
+  FD_beats_DO <- pDetect_Old * p_DO_process_unfinished * guess_RT_density * pGuess_Correct[2]
+  # Fail to Detect pathway, guessing beats detect new
+  FD_beats_DN <- pDetect_New * p_DN_process_unfinished * guess_RT_density * pGuess_Correct[2]
   
-  correct_RT_density <- DO + DN + FD + FD_win
+  correct_RT_density <- DO + DN + FD + FD_beats_DO + FD_beats_DN
   return(correct_RT_density)
 }
 
@@ -128,7 +132,7 @@ parameter_scaling <- function(theta) {
 }
 
 
-pDR <- function(rt, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
+pDR <- function(rt, correct, DO, FD, b, mu.do, mu.g, mu.dn, sigma, nu, reverse=FALSE) {
 
   weights <- c("DO"=DO, "FD"=FD, "DN"=(1-DO-FD),
                guess_parameter_scaling(b, reverse)
@@ -155,9 +159,9 @@ pDR <- function(rt, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
     }
 
     x <- integrate(density_fn, 0, rt[i],
-                   mu = c(mu.d, mu.g),
-                   sigma = c(sigma, sigma),
-                   nu = c(nu, nu),
+                   mu = c(mu.do, mu.g, mu.dn),
+                   sigma = c(sigma, sigma, sigma),
+                   nu = c(nu, nu, nu),
                    weights = weights
                    )
     p[i] <- x$value
@@ -167,7 +171,7 @@ pDR <- function(rt, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
 }
 
 
-qDR <- function(p, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
+qDR <- function(p, correct, DO, FD, b, mu.do, mu.g, mu.dn, sigma, nu, reverse=FALSE) {
 
   weights <- c("DO"=DO, "FD"=FD, "DN"=(1-DO-FD),
                guess_parameter_scaling(b, reverse)
@@ -175,30 +179,56 @@ qDR <- function(p, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
   names(weights)[(length(weights)-2):length(weights)] <- c("GC_DN", "GC_FD", "GC_DO")
   
   n_samples <- 10000
-  p_detect <- sum(weights[c("DN", "DO")])
-  n_detect_trials <- max(1, rbinom(1, size = n_samples, p = p_detect))
+  
+  N_DO_trials <- round(weights["DO"]*n_samples)
+  
+  if (N_DO_trials == 0) {
+    DO_RTs <- rep(Inf, n_samples)
+  } else {
+    DO_RTs <- c(gamlss.dist::rexGAUS(N_DO_trials,
+                                 mu = mu.do, sigma = sigma, nu = nu
+                                 ),
+                rep(Inf, n_samples - N_DO_trials)
+                )
+  }
 
-  detect_RTs <- c(gamlss.dist::rexGAUS(n_detect_trials,
-                                       mu = mu.d, sigma = sigma, nu = nu
-                                       ),
-                  rep(Inf, n_samples - n_detect_trials)
-                  )
+  N_DN_trials <- round(weights["DN"]*n_samples)
+  if (N_DN_trials == 0) {
+    DN_RTs <- rep(Inf, n_samples)
+  } else {
+    DN_RTs <- c(gamlss.dist::rexGAUS(N_DN_trials,
+                                     mu = mu.dn, sigma = sigma, nu = nu
+                                     ),
+                rep(Inf, n_samples - N_DN_trials)
+                )
+  }
 
+  
   guess_RTs <- gamlss.dist::rexGAUS(n_samples, mu = mu.g, sigma = sigma, nu = nu)
 
-  RTs <- pmin(detect_RTs, guess_RTs)
-  detect_wins <- detect_RTs == RTs
-  N_detect_wins <- sum(detect_wins)
-  accuracy <- logical(n_samples)
-  pCorrect_given_Detect <- weights["DO"] * weights["GC_DO"] +
-                           weights["DN"] * weights["GC_DN"]
-  accuracy[detect_wins] <- as.logical(rbinom(N_detect_wins,
-                                             1, pCorrect_given_Detect)
-                                      )
-  pCorrect_given_Fail <- weights["FD"] * weights["GC_FD"]
-  accuracy[!detect_wins] <- as.logical(rbinom(n_samples - N_detect_wins,
-                                              1, pCorrect_given_Fail)
-                                       )
+  RTs <- pmin(DO_RTs, DN_RTs, guess_RTs)
+  
+  DO_wins <- DO_RTs == RTs
+  N_DO_wins <- sum(DO_wins)
+  
+  DN_wins <- DN_RTs == RTs
+  N_DN_wins <- sum(DN_wins)
+  
+  accuracy <- numeric(n_samples)
+  
+  if (N_DO_wins > 0) {
+    accuracy[DO_wins] <- rbinom(N_DO_wins, 1, weights["GC_DO"])
+  }
+
+  if (N_DN_wins > 0) {
+    accuracy[DN_wins] <- rbinom(N_DN_wins, 1, weights["GC_DN"])
+  }
+  
+  if (n_samples < N_DN_wins + N_DO_wins) {
+    accuracy[!(DO_wins | DN_wins)] <- rbinom(n_samples - N_DN_wins - N_DO_wins, 1, weights["GC_FD"])
+  }
+  
+  accuracy <- as.logical(accuracy)
 
   if (correct) {
     q <- quantile(RTs[accuracy], p)
@@ -210,9 +240,12 @@ qDR <- function(p, correct, DO, FD, b, mu.d, mu.g, sigma, nu, reverse=FALSE) {
 }
 
 
-DR_obj <- function(theta, data, fixed=NULL) {
+DR_obj <- function(theta, data, yoke_detect_means=TRUE, fixed=NULL) {
 
   theta <- c(theta, fixed)
+  if (yoke_detect_means) {
+    theta["mu.dn"] <- theta["mu.do"]
+  }
   theta <- parameter_scaling(theta)
   
   data$predicted_p <- numeric(nrow(data))
@@ -231,11 +264,10 @@ DR_obj <- function(theta, data, fixed=NULL) {
       rt_cutpoints <- data$value[index_vector]
       rt_cutpoints[length(rt_cutpoints)] <- Inf
 
-      
       p <- pDR(rt = rt_cutpoints, correct = acc,
                DO = DO, FD = FD,
                b = theta["b"],
-               mu.d = theta["mu.d"], mu.g=theta["mu.g"],
+               mu.do = theta["mu.do"], mu.g=theta["mu.g"], mu.dn=theta["mu.dn"],
                sigma = theta["sigma"], nu=theta["nu"],
                reverse = strength == "L"
                )
@@ -284,7 +316,7 @@ twoLT_DR_fits_optimx <- foreach(sub = split(speeded_RT_choice_quantiles,
                                 ) %do% {
     fit <- optimx(par = c("DO_L"=0.01, "FD_L"=0.01, "DO_W"=0.01, "FD_W"=0.01,
                           "DO_S"=0.01, "FD_S"=0.01, "b"= .5,
-                          "mu.d" = .5, "mu.g" = .75, "sigma" = .25, "nu" = .25
+                          "mu.do" = .5, "mu.g" = .75, "sigma" = .25, "nu" = .25
                           ),
                   fn = DR_obj,
                   method = "nlminb",
@@ -296,28 +328,54 @@ twoLT_DR_fits_optimx <- foreach(sub = split(speeded_RT_choice_quantiles,
 
     fit$subject <- sub$subject[1]
     fit
+                                }
+
+twoLT_DR_threeMu_fits_optimx <- foreach(sub = split(speeded_RT_choice_quantiles,
+                                            speeded_RT_choice_quantiles$subject)
+                                ) %do% {
+    fit <- optimx(par = c("DO_L"=0.01, "FD_L"=0.01, "DO_W"=0.01, "FD_W"=0.01,
+                          "DO_S"=0.01, "FD_S"=0.01, "b"= .5,
+                          "mu.do" = .5, "mu.g" = .75, "mu.dn" = .5, "sigma" = .25, "nu" = .25
+                          ),
+                  fn = DR_obj,
+                  method = "nlminb",
+                  itnmax = 3000,
+                  lower = c(-Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, 0.01, 0.01, 0.01, .01, .01),
+                  upper = c( Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf, 2,    2,    2,    .5,  .5),
+                  yoke_detect_means=FALSE,
+                  control = list(kkt=FALSE),
+                  data = sub)
+
+    fit$subject <- sub$subject[1]
+    fit
   }
 
-twoLT_DR_fits <- bind_rows(twoLT_DR_fits_optimx) 
+twoLT_DR_fits <- bind_rows(yoked=bind_rows(twoLT_DR_fits_optimx),
+                           unyoked=bind_rows(twoLT_DR_threeMu_fits_optimx),
+                           .id="model"
+                           )
 ```
 
 ```{r parameters}
-parameter_names <- colnames(coef(twoLT_DR_fits_optimx[[1]]))
+parameter_names <- colnames(coef(twoLT_DR_threeMu_fits_optimx[[1]]))
 
-twoLT_DR_params_subject <- dplyr::select(twoLT_DR_fits, subject, !!!parameter_names)
+twoLT_DR_params_subject <- dplyr::select(twoLT_DR_fits, subject, model, !!!parameter_names)
 
 twoLT_DR_params_scaled_subject <- rowwise(twoLT_DR_params_subject) %>%
   do({
     data.frame(subject = .$subject,
+               model= .$model,
                as.list(parameter_scaling(unlist(.[parameter_names]))),
                stringsAsFactors = FALSE
                )
     }) %>%
   ungroup() %>%
-  dplyr::select(subject, !!!parameter_names)
+  dplyr::select(subject, model, !!!parameter_names)
 
-twoLT_DR_params_avg <- as.data.frame(t(colMeans(twoLT_DR_params_subject[parameter_names])))
-twoLT_DR_params_scaled_avg <- as.data.frame(t(colMeans(twoLT_DR_params_scaled_subject[parameter_names])))
+twoLT_DR_params_avg <- group_by(twoLT_DR_params_subject, model) %>%
+  summarise_at(.vars = parameter_names, "mean")
+twoLT_DR_params_scaled_avg <- group_by(twoLT_DR_params_scaled_subject, model) %>%
+  summarise_at(.vars = parameter_names, "mean")
 ```
 
 ```{r GOF}
@@ -332,59 +390,66 @@ null_LL <- speeded_RT_choice_quantiles %>%
   group_by(subject) %>%
   summarise(null_LL = sum(LL))
 
+
+
 twoLT_DR_GOF_subject <- dplyr::select(.data=twoLT_DR_fits,
-                                      subject, value, fevals, gevals, niter, convcode) %>%
+                                      subject, model, value, fevals, gevals, niter, convcode) %>%
   mutate(LL = -value) %>%
   left_join(x = .,  y = null_LL,
             by = "subject") %>%
   mutate(G2 = -2*(LL - null_LL),
-         df = 33 - length(parameter_names),
+         ## FIND A BETTER WAY TO COMPUTE SUBJECTWISE DF FOR EACH MODEL
+         df = 33 - c(rep(length(parameter_names)+1, 14), rep(length(parameter_names), 14)),
          p = pchisq(G2, df = df, lower.tail = FALSE)
          ) %>%
-  dplyr::select(subject, LL, null_LL, G2, df, p, fevals, gevals, niter, convcode)
+  dplyr::select(subject, model, LL, null_LL, G2, df, p, fevals, gevals, niter, convcode)
 
-twoLT_DR_GOF_sum <- as.data.frame(t(colSums(twoLT_DR_GOF_subject[c("LL", "null_LL", "G2", "df")]))) %>%
-  mutate(p = pchisq(G2, df = df, lower.tail = FALSE))
+twoLT_DR_GOF_sum <- group_by(twoLT_DR_GOF_subject, model) %>%
+  summarise_at(.vars=c("LL", "null_LL", "G2", "df"), "mean")
 ```
 
 ```{r condition_wise_parameters}
 detect_params <-
-  select(twoLT_DR_params_scaled_subject, subject, contains("_")) %>%
-  gather(key="param", value="value", -subject) %>%
+  select(twoLT_DR_params_scaled_subject, subject, model, contains("_")) %>%
+  gather(key="param", value="value", -subject, -model) %>%
   separate(param, c("param", "strength")) %>%
   spread(param, value)
 
 strength_wise_params <- left_join(detect_params,
                                   select(twoLT_DR_params_scaled_subject, -contains("_")),
-                                  by = "subject"
+                                  by = c("subject","model")
                                   )
-variables <- setdiff(names(strength_wise_params), c("subject", "strength"))
+
+variables <- setdiff(names(strength_wise_params), c("subject", "model", "strength"))
+
 condition_wise_params <- bind_rows(mutate(strength_wise_params, speeded_correct = FALSE),
                                    mutate(strength_wise_params, speeded_correct = TRUE)
                                    ) %>% 
-  select(subject, strength, speeded_correct, !!!variables)
+  select(subject, model, strength, speeded_correct, !!!variables)
 ```
 
 
 ```{r predicted_accuracy, cache=TRUE, dependson="fit"}
 
-predicted_probabilities <- left_join(condition_wise_params,
-                                     select(speeded_RT_choice_quantiles, -bin_counts),
-                                     by = c("subject", "strength", "speeded_correct")
-                                     ) %>%
+predicted_probabilities <- mutate(condition_wise_params,
+                                  mu.dn = coalesce(mu.dn, mu.do)) %>%
+  left_join(x=.,
+            y=select(speeded_RT_choice_quantiles, -bin_counts),
+            by = c("subject", "strength", "speeded_correct")
+            ) %>% 
   rowwise() %>%
   mutate(predicted_p = pDR(rt=value, correct=speeded_correct,
-                           DO, FD, b, mu.d, mu.g, sigma, nu,
+                           DO, FD, b, mu.do, mu.g, mu.dn, sigma, nu,
                            reverse = strength == "L")
          ) %>%
   ungroup() %>%
   select(-variables) %>%
-  group_by(subject, strength, speeded_correct) %>%
+  group_by(subject, model, strength, speeded_correct) %>%
   mutate(predicted_p = diff(c(0, predicted_p))) %>%
   ungroup()
 
 predicted_acc <- filter(predicted_probabilities, speeded_correct) %>%
-  group_by(subject, strength) %>%
+  group_by(subject, model, strength) %>%
   summarise(predicted_acc = sum(predicted_p)) %>%
   ungroup()
 
@@ -397,31 +462,35 @@ accuracy <- bind_rows(twoLT = rename(predicted_acc, acc = predicted_acc),
                       obs = observed_acc,
                       .id = "type"
                       ) %>%
+  unite("type", type, model) %>%
   mutate(strength = factor(strength, levels = c("L","W","S")))
 ```
 
 ```{r predicted_quantiles, cache=TRUE, dependson="fit"}
 
 predicted_quantiles <-
-  rowwise(condition_wise_params) %>%
+  mutate(condition_wise_params,
+         mu.dn = coalesce(mu.dn, mu.do)) %>%
+  rowwise() %>%
   mutate(predicted_q = list(as.data.frame(as.list(
     qDR(p=c(.1, .3, .5, .7, .9, 1),
         correct = speeded_correct,
-        DO, FD, b, mu.d, mu.g, sigma, nu,
+        DO, FD, b, mu.do, mu.g, mu.dn, sigma, nu,
         reverse = strength == "L"
         )
       ),
     check.names=FALSE)
     )) %>%
   ungroup() %>%
-  select(subject, strength, speeded_correct, predicted_q) %>%
+  select(subject, model, strength, speeded_correct, predicted_q) %>%
   unnest() %>%
   gather(key="quantile", value="value", contains("%"), factor_key = TRUE) %>%
-  arrange(subject, strength, speeded_correct)
+  arrange(subject, model, strength, speeded_correct)
 
 quantiles <- bind_rows(twoLT = predicted_quantiles,
                        obs = select(speeded_RT_choice_quantiles, -bin_counts),
-                       .id="type") %>%
+                       .id="type")  %>%
+  unite("type", type, model) %>%
   mutate(strength = factor(strength, levels = c("L","W","S")))
 
 conditional_quantiles_subject <-
@@ -477,7 +546,11 @@ ggplot(conditional_quantiles_avg,
                      values = RColorBrewer::brewer.pal(3, 'Set1')[1:2],
                      breaks=c("FALSE","TRUE"),
                      labels=c("Incorrect", "Correct")) +
-  scale_linetype_discrete(NULL, labels = c("twoLT" = "Two LT", "obs" = "Observed")) +
+  scale_linetype_discrete(NULL,
+                          labels = c("twoLT_yoked" = "Two LT\nTwo Mu's",
+                                     "twoLT_unyoked" = "Two LT\nThree Mu's",
+                                     "obs_NA" = "Observed")
+                          ) +
   ggtitle("2LT Discrete Race",
           subtitle="Conditional Quantiles (Average)") +
   scale_x_continuous("Response Time (s.)") +
@@ -489,25 +562,27 @@ ggplot(conditional_quantiles_avg,
         )
 ```
 
-
 ```{r param_summary_tables}
-formatted_names_map <- c(subject="Subject", DO_L="DO<sub>L</sub>", FD_L="FD<sub>L</sub>", 
+formatted_names_map <- c(subject="Subject", model="model", DO_L="DO<sub>L</sub>", FD_L="FD<sub>L</sub>", 
                          DO_W="DO<sub>W</sub>", FD_W="FD<sub>W</sub>", DO_S="DO<sub>S</sub>",
-                         FD_S="FD<sub>S</sub>", b="b", mu.d="μ<sub>D</sub>", mu.g="μ<sub>G</sub>",
-                         sigma="\U03C3", nu="v", G2="G<sup>2</sup>", LL="LL", null_LL="Null LL",
-                         df="df", p="p(X<sup>2</sup>)",fevals="fevals", gevals="gevals",
-                         niter="niter", convcode="convcode")
+                         FD_S="FD<sub>S</sub>", b="b", mu.do="μ<sub>D</sub>", mu.g="μ<sub>G</sub>",
+                         mu.dn="μ<sub>DN</sub>", sigma="\U03C3", nu="v", G2="G<sup>2</sup>", LL="LL",
+                         null_LL="Null LL", df="df", p="p(X<sup>2</sup>)",fevals="fevals",
+                         gevals="gevals", niter="niter", convcode="convcode"
+                         )
 #"p(X<sup>2</sup><sub>28</sub>)")
 
 left_join(twoLT_DR_params_scaled_subject,
-          select(twoLT_DR_GOF_subject, subject, G2),
-          by="subject"
+          select(twoLT_DR_GOF_subject, subject, model, G2),
+          by=c("subject", "model")
           ) %>%
+  select(model, subject, !!!parameter_names, G2) %>%
   kable(digits=3,
         col.names = formatted_names_map[names(.)],
         escape=FALSE) %>%
   kableExtra::kable_styling(full_width = FALSE) %>%
-  kableExtra::column_spec(1, bold=TRUE)
+  kableExtra::column_spec(1:2, bold=TRUE) %>%
+  kableExtra::collapse_rows(1)
 ```
 
 ```{r download_links, results="asis"}
@@ -540,8 +615,9 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
   subject_params <- filter(twoLT_DR_params_scaled_subject, subject == s)[,-1]
   subject_GOF <- filter(twoLT_DR_GOF_subject, subject == s)[,-1]
 
-  kable(data.frame(Parameter = formatted_names_map[colnames(subject_params)],
-                   Value = unlist(subject_params)
+  kable(data.frame(Parameter = formatted_names_map[colnames(subject_params)][-1],
+                   Yoked = unlist(filter(subject_params, model=="yoked")[-1]),
+                   Unyoked = unlist(filter(subject_params, model=="unyoked")[-1])
                    ),
         digits=3,
         row.names=FALSE,
@@ -550,13 +626,14 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
     kableExtra::column_spec(1, bold=TRUE) %>%
     print()
   
-    kable(data.frame(Statistic=formatted_names_map[colnames(subject_GOF)],
-                     Value=unlist(subject_GOF)
+    kable(data.frame(Statistic=formatted_names_map[colnames(subject_GOF)[-1]],
+                     Yoked = unlist(filter(subject_GOF, model=="yoked")[-1]),
+                     Unyoked = unlist(filter(subject_GOF, model=="unyoked")[-1])
                      ),
-        digits = c(2,2,2,0,3,0,0,0,0),
-        row.names=FALSE,
-        escape = FALSE) %>%
-    kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+          digits = 3,
+          row.names = FALSE,
+          escape = FALSE) %>% 
+    kableExtra::kable_styling(full_width = FALSE, position = "left") %>%
     kableExtra::column_spec(1, bold=TRUE) %>%
     print()
 
@@ -566,8 +643,8 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
     geom_point(aes(x="1"), size=2, stroke=2,
                position = position_dodge(width=.35)) +
     scale_shape_manual("",
-                       values = c(16,4),
-                       limits = c("obs","twoLT")
+                       values = c(16, 4, 3),
+                       limits = c("obs_NA","twoLT_yoked", "twoLT_unyoked")
                        ) +
     scale_color_discrete("Srength",
                          labels = c("L" = "Lure",
@@ -579,7 +656,8 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
     theme(legend.key.height = unit(9, 'mm'),
           axis.title.x = element_blank(),
           axis.ticks.x = element_blank(),
-          axis.text.x = element_blank())
+          axis.text.x = element_blank()
+          )
   
   quantile_plot <- 
     ggplot(filter(quantiles, subject == s, quantile != "100%"),
@@ -598,9 +676,9 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
                                     )
                                    )
                ) +
-    scale_shape_manual(values=c(16,4),
-                   breaks=c("observed","predicted")
-                   ) +
+    scale_shape_manual(values = c(16, 4, 3),
+                       limits = c("obs_NA","twoLT_yoked", "twoLT_unyoked")
+                       ) +
     scale_y_continuous("RT Quantile Value (s.)") +
     guides(color=FALSE, shape=FALSE)
   
