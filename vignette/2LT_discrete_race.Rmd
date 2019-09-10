@@ -178,55 +178,70 @@ qDR <- function(p, correct, DO, FD, b, mu.do, mu.g, mu.dn, sigma, nu, reverse=FA
   names(weights) <- c("GC_DN", "GC_FD", "GC_DO")
   
   n_samples <- 10000
-  
+
+  ## DO available Races
   N_DO_trials <- round(DO*n_samples)
-  
-  if (N_DO_trials == 0) {
-    DO_RTs <- rep(Inf, n_samples)
+  if (N_DO_trials > 0) {
+    
+    DO_RTs <- rexGAUS(N_DO_trials, mu = mu.do, sigma = sigma, nu = nu)
+    guess_RTs <- rexGAUS(N_DO_trials, mu = mu.g, sigma = sigma, nu = nu)
+    DO_wins <- DO_RTs <= guess_RTs
+    N_DO_wins <- sum(DO_wins)
+    
+    if (N_DO_wins > 0) {
+      
+      DO_race_RTs <- ifelse(DO_wins, DO_RTs, guess_RTs)
+      DO_race_correct <- numeric(N_DO_trials)
+      DO_race_correct[DO_wins] <- rbinom(N_DO_wins, 1, weights["GC_DO"])
+      DO_race_correct[!DO_wins] <- rbinom(N_DO_trials - N_DO_wins, 1, weights["GC_FD"])
+    
+    } else {
+      DO_race_RTs <- guess_RTs
+      DO_race_correct <- rbinom(N_DO_trials, 1, weights["GC_FD"])
+    }
   } else {
-    DO_RTs <- c(gamlss.dist::rexGAUS(N_DO_trials,
-                                 mu = mu.do, sigma = sigma, nu = nu
-                                 ),
-                rep(Inf, n_samples - N_DO_trials)
-                )
+    DO_race_RTs <- NULL
+    DO_race_correct <- NULL
   }
-
+  
+  ## DN available Races
   N_DN_trials <- round(DN*n_samples)
-  if (N_DN_trials == 0) {
-    DN_RTs <- rep(Inf, n_samples)
+  if (N_DN_trials > 0) {
+    
+    DN_RTs <- rexGAUS(N_DN_trials, mu = mu.dn, sigma = sigma, nu = nu)
+    guess_RTs <- rexGAUS(N_DN_trials, mu = mu.g, sigma = sigma, nu = nu)
+    DN_wins <- DN_RTs <= guess_RTs
+    N_DN_wins <- sum(DN_wins)
+    
+    if (N_DN_wins > 0) {
+      
+      DN_race_RTs <- ifelse(DN_wins, DN_RTs, guess_RTs)
+      DN_race_correct <- numeric(N_DN_trials)
+      DN_race_correct[DN_wins] <- rbinom(N_DN_wins, 1, weights["GC_DN"])
+      DN_race_correct[!DN_wins] <- rbinom(N_DN_trials - N_DN_wins, 1, weights["GC_FD"])
+    
+    } else {
+      DN_race_RTs <- guess_RTs
+      DN_race_correct <- rbinom(N_DN_trials, 1, weights["GC_FD"])
+    }
   } else {
-    DN_RTs <- c(gamlss.dist::rexGAUS(N_DN_trials,
-                                     mu = mu.dn, sigma = sigma, nu = nu
-                                     ),
-                rep(Inf, n_samples - N_DN_trials)
-                )
+    DN_race_RTs <- NULL
+    DN_race_correct <- NULL
   }
 
-  guess_RTs <- gamlss.dist::rexGAUS(n_samples, mu = mu.g, sigma = sigma, nu = nu)
+  ## No detection available, non-race RTs
+  N_norace_trials <- n_samples - N_DN_trials - N_DO_trials
+  if (N_norace_trials > 0){
+    norace_RTs <- rexGAUS(N_norace_trials, mu = mu.g, sigma = sigma, nu = nu)
+    norace_correct <- rbinom(N_norace_trials, 1, weights["GC_FD"])
+  } else {
+    norace_RTs <- NULL
+    norace_correct <- NULL
+  }
+  
 
-  RTs <- pmin(DO_RTs, DN_RTs, guess_RTs)
-  
-  DO_wins <- DO_RTs == RTs
-  N_DO_wins <- sum(DO_wins)
-  
-  DN_wins <- DN_RTs == RTs
-  N_DN_wins <- sum(DN_wins)
-  
-  accuracy <- numeric(n_samples)
-  
-  if (N_DO_wins > 0) {
-    accuracy[DO_wins] <- rbinom(N_DO_wins, 1, weights["GC_DO"])
-  }
-
-  if (N_DN_wins > 0) {
-    accuracy[DN_wins] <- rbinom(N_DN_wins, 1, weights["GC_DN"])
-  }
-  
-  if (n_samples < N_DN_wins + N_DO_wins) {
-    accuracy[!(DO_wins | DN_wins)] <- rbinom(n_samples - N_DN_wins - N_DO_wins, 1, weights["GC_FD"])
-  }
-  
-  accuracy <- as.logical(accuracy)
+  RTs <- c(DO_race_RTs, DN_race_RTs, norace_RTs)
+  accuracy <- as.logical(c(DO_race_correct, DN_race_correct, norace_correct))
 
   if (correct) {
     q <- quantile(RTs[accuracy], p)
