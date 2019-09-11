@@ -11,8 +11,8 @@ editor_options:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
-# library(gamlss)
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center", cache = TRUE)
+library(gamlss.dist)
 library(rprojroot)
 library(kableExtra)
 library(optimx)
@@ -23,7 +23,13 @@ library(ggplot2)
 root_dir <- rprojroot::is_rstudio_project$find_file()
 ```
 
-```{r discrete_race_exgaussians, cache=TRUE}
+```{css css}
+.main-container{
+  max-width: 1200px;
+}
+```
+
+```{r discrete_race_exgaussians}
 ## mu, sigma & nu should be vectors of length 2
 ## First element should be parameter for detect distribution
 ## Second element should be parameter for guess distribution
@@ -83,9 +89,14 @@ deRT <- function(x, mu, sigma, nu, weights) {
   }
 ```
 
-```{r discrete_race_objective_functions, cache=TRUE}
+```{r discrete_race_objective_functions}
 
 DR_predictions <- function(parameters, data) {
+  
+  if ( !("mu.dn" %in% names(parameters)) ) {
+    parameters["mu.dn"] <- parameters["mu.do"]
+  }
+  
   data$predicted_p <- numeric(nrow(data))
 
   for (strength in unique(data$strength)) {
@@ -93,13 +104,15 @@ DR_predictions <- function(parameters, data) {
     condition_index <- data$strength==strength
     
     if (strength == "L") {
-      detect_correctly <- parameters['dNew.L']
+      mu_detect <- parameters["mu.dn"]
+      detect_correctly <- parameters["dNew.L"]
       guess_correctly <- 1 - parameters['gOld']
     } else {
+      mu_detect <- parameters["mu.do"]
       detect_correctly <- parameters[paste0('dOld.', strength)]
       guess_correctly <- parameters['gOld']
     }
-
+    
     for (acc in unique(data$speeded_correct)) {
 
       if (acc) {
@@ -116,7 +129,7 @@ DR_predictions <- function(parameters, data) {
       for (bin_number in 1:length(p)) {
 
         x <- integrate(density_fn, cutpoints[bin_number], cutpoints[bin_number+1],
-                       mu = parameters[c("mu.d","mu.g")],
+                       mu = c(mu_detect, parameters["mu.g"]),
                        sigma = parameters[c("sigma","sigma")],
                        nu = parameters[c("nu","nu")],
                        weights = c(detect_correctly, guess_correctly)
@@ -132,6 +145,10 @@ DR_predictions <- function(parameters, data) {
 }
 
 DR_quantiles <- function(parameters, data) {
+
+  if ( !("mu.dn" %in% names(parameters)) ) {
+    parameters["mu.dn"] <- parameters["mu.do"]
+  }
   
   data$predicted_qValue <- numeric(nrow(data))
 
@@ -140,9 +157,11 @@ DR_quantiles <- function(parameters, data) {
     condition_index <- data$strength==strength
     
     if (strength == "L") {
-      detect_correctly <- parameters['dNew.L']
+      mu_detect <- parameters["mu.dn"]
+      detect_correctly <- parameters["dNew.L"]
       guess_correctly <- 1 - parameters['gOld']
     } else {
+      mu_detect <- parameters["mu.do"]
       detect_correctly <- parameters[paste0('dOld.', strength)]
       guess_correctly <- parameters['gOld']
     }
@@ -150,7 +169,7 @@ DR_quantiles <- function(parameters, data) {
     n_samples <- 1000
     n_detect_trials <- rbinom(1, size = n_samples, p = detect_correctly)
     detect_RTs <- c(gamlss.dist::rexGAUS(n_detect_trials,
-                                         mu = parameters["mu.d"],
+                                         mu = mu_detect,
                                          sigma = parameters["sigma"],
                                          nu = parameters["nu"]),
                     rep(Inf, n_samples - n_detect_trials)
@@ -179,9 +198,19 @@ DR_quantiles <- function(parameters, data) {
 }
 
 
-DR_obj <- function(parameters, data, fixed=NULL){
+DR_obj <- function(parameters, data, fixed=NULL, p_names=NULL) {
+  
+  if (!is.null(p_names)) {
+    names(parameters) <- p_names
+    p_names <- names(parameters)
+  }
 
   parameters <- c(parameters, fixed)
+  
+  if ( !("mu.dn" %in% names(parameters)) ) {
+    parameters["mu.dn"] <- parameters["mu.do"]
+  }
+  
   data$predicted_p <- numeric(nrow(data))
   log_likelihood <- 0
 
@@ -190,9 +219,11 @@ DR_obj <- function(parameters, data, fixed=NULL){
     condition_index <- data$strength==strength
     
     if (strength == "L") {
-      detect_correctly <- parameters['dNew.L']
+      mu_detect <- parameters["mu.dn"]
+      detect_correctly <- parameters["dNew.L"]
       guess_correctly <- 1 - parameters['gOld']
     } else {
+      mu_detect <- parameters["mu.do"]
       detect_correctly <- parameters[paste0('dOld.', strength)]
       guess_correctly <- parameters['gOld']
     }
@@ -213,7 +244,7 @@ DR_obj <- function(parameters, data, fixed=NULL){
       for (bin_number in 1:length(p)) {
 
         x <- integrate(density_fn, cutpoints[bin_number], cutpoints[bin_number+1],
-                       mu = parameters[c("mu.d","mu.g")],
+                       mu = c(mu_detect, parameters["mu.g"]),
                        sigma = parameters[c("sigma","sigma")],
                        nu = parameters[c("nu","nu")],
                        weights = c(detect_correctly, guess_correctly)
@@ -254,37 +285,142 @@ speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
               )) %>%
   ungroup() %>%
   unnest()
+
+split_data_list <- split(speeded_RT_choice_quantiles,
+                         speeded_RT_choice_quantiles$subject
+                         )
 ```
 
-```{r fit, cache=TRUE, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions")}
-DR_fits <- foreach(sub = split(speeded_RT_choice_quantiles,
-                               speeded_RT_choice_quantiles$subject)
-                   ) %do% {
-    fit <- optimx(par = c("dNew.L" = .5, "dOld.W" = .5, "dOld.S"=.75, "gOld"=.5,
-                          "mu.d" = .5, "mu.g" = .75,
-                          "sigma" = .25, "nu" = .25
-                          ),
+```{r start_cluster, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions", "observed_RT_choice_data")}
+cl <- parallel::makeCluster(parallel::detectCores(),
+                            outfile = "",
+                            methods = FALSE)
+
+doParallel::registerDoParallel(cl)
+```
+
+```{r yoked_fit, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions", "observed_RT_choice_data")}
+
+twoHT_DR_yoked_fits <- foreach(sub = split_data_list,
+                               .packages = c("gamlss.dist","optimx")
+                               ) %dopar%
+  {
+    starting_theta <- c("dNew.L" = .5, "dOld.W" = .5, "dOld.S"=.75, "gOld"=.5,
+                        "mu.do" = .5, "mu.g" = .75, "sigma" = .25, "nu" = .25
+                        )
+    fit <- optimx(starting_theta,
                   fn = DR_obj,
-                  method = "nlminb",
-                  itnmax = 3000,
+                  method = c("nmkb", "nlminb"),
+                  itnmax = 500,
                   lower = c(.01, .01, .01, .01, .01, .01, .01, .01),
                   upper = c(1,   1,   1,   1,   2,   2,   .5,  .5),
-                  control = list(kkt=FALSE),
-                  data = sub)
+                  control = list(kkt=FALSE, follow.on=TRUE),
+                  data = sub,
+                  p_names = names(starting_theta))
 
+    fit <- fit[2, ] # Take nlminb result
     fit$subject <- sub$subject[1]
     fit
   }
 
 ```
 
-```{r predictions, cache=TRUE, dependson="fit"}
-estimated_parameters <- bind_rows(DR_fits)
+```{r unyoked_fit, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions", "observed_RT_choice_data")}
+
+twoHT_DR_unyoked_fits <- foreach(sub = split_data_list,
+                                 .packages = c("gamlss.dist","optimx")
+                                 ) %dopar%
+  {
+    starting_theta <- c("dNew.L" = .5, "dOld.W" = .5, "dOld.S"=.75, "gOld"=.5,
+                        "mu.do" = .5, "mu.g" = .75, "mu.dn"=.7, "sigma" = .25, "nu" = .25
+                        )
+    fit <- optimx(starting_theta,
+                  fn = DR_obj,
+                  method = c("nmkb", "nlminb"),
+                  itnmax = 500,
+                  lower = c(.01, .01, .01, .01, .01, 0.01, .01, .01, .01),
+                  upper = c(1,   1,   1,   1,   2,   2,    2,   .5,  .5),
+                  control = list(kkt=FALSE, follow.on=TRUE),
+                  data = sub,
+                  p_names = names(starting_theta))
+
+    fit <- fit[2, ] # Take nlminb result
+    fit$subject <- sub$subject[1]
+    fit
+  }
+
+```
+
+```{r fixed_detect_yoked, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions", "observed_RT_choice_data")}
+
+twoHT_params <- read.csv(file.path(root_dir, "vignette", "2HT_detect_params.csv")) %>%
+  select(subject, dNew.L = DN, dOld.W = DO_W, dOld.S = DO_S) %>%
+  mutate(subject = as.character(subject)) %>%
+  split(., .$subject)
+
+twoHT_DR_yoked_Dfixed_fits <- foreach(sub = Map(function(x,y) { list("data"=x, "theta"=y) },
+                                                split_data_list, twoHT_params
+                                                ),
+                                      .packages = c("gamlss.dist","optimx")
+                                      ) %dopar%
+  {
+    starting_theta <- c("gOld"=.5, "mu.do" = .5, "mu.g" = .75, "sigma" = .25, "nu" = .25)
+    
+    fit <- optimx(par = starting_theta,
+                  fn = DR_obj,
+                  method = c("nmkb", "nlminb"),
+                  itnmax = 500,
+                  lower = c(.01, .01, .01, .01, .01),
+                  upper = c(1,   2,   2,   .5,  .5),
+                  control = list(kkt=FALSE, follow.on=TRUE),
+                  data = sub$data,
+                  fixed = unlist(sub$theta[2:4]),
+                  p_names = names(starting_theta)
+                  )
+
+    fit <- fit[2, ]
+    A <- attributes(fit)
+    fit <- cbind(fit, sub$theta)
+    A$names <- c(A$names, names(sub$theta))
+    attributes(fit) <- A
+    fit
+  }
+
+```
+
+
+```{r}
+parallel::stopCluster(cl)
+```
+
+
+```{r parameters}
+param_names <- colnames(coef(twoHT_DR_unyoked_fits[[1]]))
+
+twoHT_DR_fits <- bind_rows("unyoked" = bind_rows(twoHT_DR_unyoked_fits),
+                           "yoked"= bind_rows(twoHT_DR_yoked_fits),
+                           "yoked_fixed" = bind_rows(twoHT_DR_yoked_Dfixed_fits),
+                           .id = "model"
+                           )
+
+fitted_param_list <- lapply(c("unyoked"=twoHT_DR_unyoked_fits,
+                              "yoked"=twoHT_DR_yoked_fits,
+                              "yoked_fixed" = twoHT_DR_yoked_Dfixed_fits
+                              ),
+                            FUN = function(x) {
+                              columns <- union(c("dNew.L","dOld.W","dOld.S"), colnames(coef(x)))
+                              unlist(x[columns])
+                              }
+                            )
+
+```
+
+
+```{r predictions, dependson="fit"}
 
 predicted_probabilities <- Map(DR_predictions,
-                               lapply(DR_fits, function(x) unlist(x[1:8])),
-                               split(speeded_RT_choice_quantiles,
-                                     speeded_RT_choice_quantiles$subject)
+                               fitted_param_list,
+                               split_data_list
                                ) %>%
   bind_rows() %>%
   group_by(subject, strength, speeded_correct) %>%
@@ -306,9 +442,8 @@ predicted_acc <- group_by(predicted_probabilities,
   
 
 predicted_quantiles <- Map(DR_quantiles,
-                           lapply(DR_fits, function(x) unlist(x[1:8])),
-                           split(speeded_RT_choice_quantiles,
-                                 speeded_RT_choice_quantiles$subject)
+                           fitted_param_list,
+                           split_data_list
                            ) %>%
   bind_rows() %>%
   select(-bin_counts) %>%
@@ -317,38 +452,6 @@ predicted_quantiles <- Map(DR_quantiles,
   mutate(type = sub("_.", "", type),
          type = sub("Value", "", type, fixed=TRUE),
          strength = factor(strength, levels = c("L","W","S")))
-```
-
-```{r 2HT, cache=TRUE}
-twoHT_params <- read.csv("2HT_detect_params.csv") %>%
-  select(subject, dNew.L = DN, dOld.W = DO_W, dOld.S = DO_S) %>%
-  split(., .$subject)
-
-DR_2HT_fits <- foreach(sub = split(speeded_RT_choice_quantiles,
-                               speeded_RT_choice_quantiles$subject)
-                   ) %do% {
-    fit <- optimx(par = c("gOld"=.5,
-                          "mu.d" = .5, "mu.g" = .75,
-                          "sigma" = .25, "nu" = .25
-                          ),
-                  fn = DR_obj,
-                  method = "nlminb",
-                  itnmax = 3000,
-                  lower = c(.01, .01, .01, .01, .01, .01, .01, .01),
-                  upper = c(1,   1,   1,   1,   2,   2,   .5,  .5),
-                  control = list(kkt=FALSE),
-                  data = sub,
-                  fixed = unlist(twoHT_params[[sub$subject[1]]])[2:4])
-
-    fit$subject <- sub$subject[1]
-    fit <- cbind(fit, twoHT_params[[sub$subject[1]]][2:4])
-  }
-
-```
-
-```{r, warning=FALSE}
-detect_fixed_params <- bind_rows(DR_2HT_fits) %>%
-  mutate(subject = as.character(subject))
 ```
 
 ```{r g2}
