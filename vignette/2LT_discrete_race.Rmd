@@ -253,12 +253,18 @@ qDR <- function(p, correct, DO, FD, b, mu.do, mu.g, mu.dn, sigma, nu, reverse=FA
 }
 
 
-DR_obj <- function(theta, data, yoke_detect_means=TRUE, fixed=NULL) {
+DR_obj <- function(theta, data, yoke_detect_means=TRUE, fixed=NULL, p_names = NULL) {
+
+  if (!is.null(p_names)) {
+    names(theta) <- p_names
+  }
 
   theta <- c(theta, fixed)
+  
   if (yoke_detect_means) {
     theta["mu.dn"] <- theta["mu.do"]
   }
+  
   theta <- parameter_scaling(theta)
   
   data$predicted_p <- numeric(nrow(data))
@@ -324,41 +330,49 @@ speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
 ```
 
 ```{r fit, cache=TRUE, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions")}
+
 twoLT_DR_fits_optimx <- foreach(sub = split(speeded_RT_choice_quantiles,
                                             speeded_RT_choice_quantiles$subject)
                                 ) %do% {
-    fit <- optimx(par = c("DO_L"=0.01, "FD_L"=0.01, "DO_W"=0.01, "FD_W"=0.01,
-                          "DO_S"=0.01, "FD_S"=0.01, "b"= .5,
-                          "mu.do" = .5, "mu.g" = .75, "sigma" = .25, "nu" = .25
-                          ),
+
+    starting_theta <- c("DO_L"=0.01, "FD_L"=0.01, "DO_W"=0.01, "FD_W"=0.01,
+                        "DO_S" = 0.01, "FD_S" = 0.01, "b" = .5,
+                        "mu.do" = .5, "mu.g" = .75, "sigma" = .25, "nu" = .25
+                        )
+    fit <- optimx(starting_theta,
                   fn = DR_obj,
-                  method = "nlminb",
-                  itnmax = 3000,
+                  method = c("nmkb","nlminb"),
+                  itnmax = 500,
                   lower = c(-Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, 0.01, 0.01, .01, .01),
                   upper = c( Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf, 2,    2,    .5,  .5),
-                  control = list(kkt=FALSE),
-                  data = sub)
+                  control = list(kkt=FALSE, follow.on=TRUE),
+                  data = sub,
+                  p_names = names(starting_theta))
 
+    fit <- fit[2,]
     fit$subject <- sub$subject[1]
     fit
-                                }
+  }
 
 twoLT_DR_threeMu_fits_optimx <- foreach(sub = split(speeded_RT_choice_quantiles,
                                             speeded_RT_choice_quantiles$subject)
                                 ) %do% {
-    fit <- optimx(par = c("DO_L"=0.01, "FD_L"=0.01, "DO_W"=0.01, "FD_W"=0.01,
-                          "DO_S"=0.01, "FD_S"=0.01, "b"= .5,
-                          "mu.do" = .5, "mu.g" = .75, "mu.dn" = .5, "sigma" = .25, "nu" = .25
-                          ),
+    starting_theta <- c("DO_L"=0.01, "FD_L"=0.01, "DO_W"=0.01, "FD_W"=0.01,
+                        "DO_S" = 0.01, "FD_S" = 0.01, "b" = .5,
+                        "mu.do" = .5, "mu.g" = .75, "mu.dn" = .5, "sigma" = .25, "nu" = .25
+                        )
+    fit <- optimx(starting_theta,
                   fn = DR_obj,
-                  method = "nlminb",
-                  itnmax = 3000,
+                  method = c("nmkb","nlminb"),
+                  itnmax = 500,
                   lower = c(-Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, 0.01, 0.01, 0.01, .01, .01),
                   upper = c( Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf, 2,    2,    2,    .5,  .5),
-                  yoke_detect_means=FALSE,
                   control = list(kkt=FALSE),
-                  data = sub)
-
+                  data = sub,
+                  yoke_detect_means=FALSE,
+                  p_names = names(starting_theta)
+                  )
+    fit <- fit[2,]
     fit$subject <- sub$subject[1]
     fit
   }
