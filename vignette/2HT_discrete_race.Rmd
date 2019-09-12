@@ -395,7 +395,6 @@ parallel::stopCluster(cl)
 
 
 ```{r parameters, dependson=c("fixed_detect_yoked", "unyoked_fit", "yoked_fit")}
-param_names <- colnames(coef(twoHT_DR_unyoked_fits[[1]]))
 
 twoHT_DR_fits <- bind_rows("unyoked" = bind_rows(twoHT_DR_unyoked_fits),
                            "yoked"= bind_rows(twoHT_DR_yoked_fits),
@@ -413,6 +412,18 @@ fitted_param_list <- lapply(c("unyoked"=twoHT_DR_unyoked_fits,
                               }
                             )
 
+param_names <- lapply(c(twoHT_DR_unyoked_fits[1],
+                        twoHT_DR_yoked_fits[1],
+                        twoHT_DR_yoked_Dfixed_fits[1]
+                        ),
+                      function(x) { colnames(coef(x))}
+                      ) %>%
+  Reduce(union, x = .)
+
+twoHT_DR_params_subject <- select(.data = twoHT_DR_fits, model, subject, !!!param_names)
+
+twoHT_DR_params_avg <- group_by(.data = twoHT_DR_params_subject, model) %>%
+  summarise_at(.vars = param_names, .funs = "mean")
 ```
 
 
@@ -509,15 +520,11 @@ if (!dir.exists(files_dir)) {
   dir.create(files_dir)
 }
 
-write.csv(twoLT_DR_params_subject,
+write.csv(twoHT_DR_params_subject,
           file = file.path(files_dir, "parameters.csv"),
           row.names = FALSE
           )
-write.csv(twoLT_DR_params_scaled_subject,
-          file = file.path(files_dir, "scaled_parameters.csv"),
-          row.names = FALSE
-          )
-write.csv(twoLT_DR_GOF_subject,
+write.csv(twoHT_DR_GOF_subject,
           file = file.path(files_dir, "GOF.csv"),
           row.names = FALSE
           )
@@ -570,18 +577,50 @@ ggplot(conditional_quantiles_avg,
 ```
 
 
-```{r plots, fig.width=9, fig.align="center", results="asis"}
+```{r param_summary_tables}
+formatted_names_map <- c(subject="Subject", model="model", dNew.L="DN<sub>L</sub>", dOld.W="DO<sub>W</sub>", 
+                         dOld.S="DO<sub>S</sub>", gOld = "GO", mu.do="μ<sub>D</sub>", mu.g="μ<sub>G</sub>",
+                         mu.dn="μ<sub>DN</sub>", sigma="\U03C3", nu="v", G2="G<sup>2</sup>", LL="LL",
+                         null_LL="Null LL", df="df", p="p(X<sup>2</sup>)",fevals="fevals",
+                         gevals="gevals", niter="niter", convcode="convcode"
+                         )
 
-formatted_names <- c("Model",
-                     "D<sub>L</sub>", "D<sub>W</sub>", "D<sub>S</sub>", "G<sub>old</sub>",
-                     "\u03BC<sub>D</sub>", "\u03BC<sub>G</sub>", "&sigma;", "τ",
-                     "-LL", "G<sup>2</sup>", "p(X<sup>2</sup><sub>28</sub>)")
+left_join(twoHT_DR_params_subject,
+          select(twoHT_DR_GOF_subject, subject, model, G2),
+          by=c("subject", "model")
+          ) %>%
+  kable(digits=3,
+        col.names = formatted_names_map[names(.)],
+        escape=FALSE) %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::column_spec(1:2, bold=TRUE) %>%
+  kableExtra::collapse_rows(1)
+```
+
+```{r download_links, results="asis"}
+cat("<ul><li>",
+    paste0('<a href="', file.path(files_dir, "parameters.csv"),
+           '">Download Raw Parameters</a>'
+           ),
+    "</li><li>",
+    paste0('<a href="',
+           file.path(files_dir, "GOF.csv"),
+           '">Download GOF Statistics</a>'
+       ),
+    "</li></ul>",
+    sep=""
+    )
+```
+
+
+
+```{r subject_plots, fig.width=9, fig.align="center", results="asis"}
 
 for (s in unique(speeded_RT_choice_quantiles$subject)) {
   
   cat(sprintf("<h3>Subject %s</h3>", s))
   
-  subject_params <- filter(estimated_parameters, subject == s)
+  subject_params <- filter(twoHT_DR_params_subject, subject == s)
   kable(subject_params %>%
           select(model_type, dNew.L, dOld.W, dOld.S, gOld, mu.d, mu.g, sigma, nu, value, G2, p)  %>%
           mutate(dNew.L = cell_spec(round(dNew.L,3), background=c("#ffffff", "#ff4c4c")),
