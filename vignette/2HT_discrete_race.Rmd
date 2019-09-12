@@ -389,12 +389,12 @@ twoHT_DR_yoked_Dfixed_fits <- foreach(sub = Map(function(x,y) { list("data"=x, "
 ```
 
 
-```{r}
+```{r stop_cluser, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions", "observed_RT_choice_data")}
 parallel::stopCluster(cl)
 ```
 
 
-```{r parameters}
+```{r parameters, dependson=c("fixed_detect_yoked", "unyoked_fit", "yoked_fit")}
 param_names <- colnames(coef(twoHT_DR_unyoked_fits[[1]]))
 
 twoHT_DR_fits <- bind_rows("unyoked" = bind_rows(twoHT_DR_unyoked_fits),
@@ -416,42 +416,72 @@ fitted_param_list <- lapply(c("unyoked"=twoHT_DR_unyoked_fits,
 ```
 
 
-```{r predictions, dependson="fit"}
+```{r predicted_probabilities, dependson="parameters"}
 
-predicted_probabilities <- Map(DR_predictions,
-                               fitted_param_list,
-                               split_data_list
-                               ) %>%
-  bind_rows() %>%
-  group_by(subject, strength, speeded_correct) %>%
-  mutate(observed_p = bin_counts/sum(bin_counts)) %>%
+predicted_probabilities <- mapply(DR_predictions,
+                                  fitted_param_list,
+                                  split_data_list,
+                                  SIMPLIFY = FALSE
+                                  ) %>%
+  bind_rows(.id="model") %>%
+  mutate(model = sub("[[:digit:]]+", "", model)) %>%
+  select(-bin_counts) %>%
+  rename(p = predicted_p)
+
+
+obs_p <- group_by(.data = speeded_RT_choice_quantiles,
+           subject, strength, speeded_correct) %>%
+  mutate(p = bin_counts/sum(bin_counts)) %>%
   group_by(subject, strength) %>%
-  mutate(observed_p = observed_p*c(rep(sum(bin_counts[!speeded_correct])/sum(bin_counts), 6),
-                                   rep(sum(bin_counts[speeded_correct])/sum(bin_counts), 6))
+  mutate(p = p*c(rep(sum(bin_counts[!speeded_correct])/sum(bin_counts), 6),
+                 rep(sum(bin_counts[speeded_correct])/sum(bin_counts), 6))
          ) %>%
   ungroup() %>%
-  mutate(strength = factor(strength, levels = c("L","W","S")))
+  select(-bin_counts)
 
-predicted_acc <- group_by(predicted_probabilities,
-                          subject, strength, speeded_correct) %>%
-  summarise_at(c("observed_p","predicted_p"), sum) %>%
-  ungroup() %>%
-  gather("type", "p", observed_p, predicted_p) %>%
-  mutate(type = sub("_p", "", type)) %>%
-  arrange(subject, strength, speeded_correct)
-  
 
-predicted_quantiles <- Map(DR_quantiles,
-                           fitted_param_list,
-                           split_data_list
-                           ) %>%
-  bind_rows() %>%
-  select(-bin_counts) %>%
-  rename(observed=value) %>%
-  gather("type", "value", observed, predicted_qValue) %>%
-  mutate(type = sub("_.", "", type),
-         type = sub("Value", "", type, fixed=TRUE),
-         strength = factor(strength, levels = c("L","W","S")))
+probabilities <- bind_rows(predicted_probabilities,
+                           mutate(obs_p, model = "obs")
+                           ) %>% 
+  rename(type=model)
+
+
+accuracy <- group_by(predicted_probabilities,
+                     type, subject, strength, speeded_correct
+                     ) %>%
+  summarise(p = sum(p)) %>%
+  ungroup()
+```
+
+```{r predicted_quantiles, dependson=c("parameters", "predicted_probabilities")}
+predicted_quantiles <- mapply(DR_quantiles,
+                              fitted_param_list,
+                              split_data_list,
+                              SIMPLIFY = FALSE
+                              ) %>% 
+  bind_rows(.id="model") %>%
+  mutate(model = sub("[[:digit:]]+", "", model)) %>%
+  select(-bin_counts, -value) %>%
+  rename(RT = predicted_qValue)
+
+obs_q <- select(speeded_RT_choice_quantiles, -bin_counts) %>%
+  mutate(model = "obs") %>%
+  rename(RT = value)
+
+quantiles <- bind_rows(predicted_quantiles,
+                       obs_q) %>%
+  rename(type = model) %>%
+  filter(quantile != "100%")
+
+conditional_quantiles <- left_join(quantiles, accuracy,
+                                   by = c("type","subject","strength", "speeded_correct")
+                                   ) %>%
+  mutate(p = p*(as.numeric(sub("%", "", quantile)) / 100))
+
+conditional_quantiles_avg <- group_by(.data = conditional_quantiles,
+                                      type, strength, speeded_correct, quantile) %>%
+    summarise_at(c("RT","p"), mean) %>%
+    ungroup()
 ```
 
 ```{r g2}
