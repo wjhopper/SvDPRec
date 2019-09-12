@@ -48,6 +48,13 @@ commit_to_ghpages <- function(report_dir="vignette", exclude="joint_diffusion.Rm
   n_files_per_report <- vapply(report_files, FUN = length, FUN.VALUE = numeric(1))
   files_to_commit <- character(sum(n_files_per_report))
   
+  sha <- system("git rev-parse --short HEAD", intern = TRUE, wait=TRUE)
+  branch_switch_status <- system("git checkout gh-pages", intern = TRUE, wait=TRUE)
+  if (!is.null(attr(branch_switch_status, "status"))) {
+    msg <- paste0(branch_switch_status, collapse = "\n")
+    stop(msg)
+  }
+  
   insert_at <- 1
   for (i in 1:length(report_files)) {
     f <- report_files[[i]]
@@ -62,12 +69,6 @@ commit_to_ghpages <- function(report_dir="vignette", exclude="joint_diffusion.Rm
     }
   }
 
-  sha <- system("git rev-parse --short HEAD", intern = TRUE, wait=TRUE)
-  branch_switch_status <- system("git checkout gh-pages", intern = TRUE, wait=TRUE)
-  if (!is.null(attr(branch_switch_status, "status"))) {
-    msg <- paste0(branch_switch_status, collapse = "\n")
-    stop(msg)
-  }
   system(paste0("git add ", paste0(files_to_commit, collapse = " ")), wait = TRUE)
   system(sprintf('git commit -m "Updating from %s"', sha), wait = TRUE)
   system("git checkout master")
