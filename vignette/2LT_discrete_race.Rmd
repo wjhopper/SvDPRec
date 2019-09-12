@@ -564,7 +564,7 @@ write.csv(twoLT_DR_GOF_subject,
 ```{r qp_plot, fig.width=10, fig.height=7}
 ggplot(conditional_quantiles_avg,
        aes(x=RT, y=p, color=speeded_correct, linetype=type, shape=type)) +
-  geom_point(size=2) +
+  geom_point(size=3) +
   geom_line(size=1) +
   facet_grid(~strength,
              labeller = as_labeller(c("L" = "Lure", "W" = "Weak", "S" = "Strong"))
@@ -573,19 +573,29 @@ ggplot(conditional_quantiles_avg,
                      values = RColorBrewer::brewer.pal(3, 'Set1')[1:2],
                      breaks=c("FALSE","TRUE"),
                      labels=c("Incorrect", "Correct")) +
-  scale_linetype_discrete(NULL,
-                          labels = c("twoLT_yoked" = "Two Mu's",
-                                     "twoLT_unyoked" = "Three Mu's",
-                                     "obs_NA" = "Observed")
-                          ) +
+  scale_linetype_manual(NULL,
+                        values = c(5, 2, 1),
+                        limits = c("twoLT_unyoked", "twoLT_yoked", "obs_NA"),
+                        labels = c("twoLT_yoked" = "Two Mu's",
+                                   "twoLT_unyoked" = "Three Mu's",
+                                   "obs_NA" = "Observed")
+                        ) +
+  scale_shape_manual(NULL,
+                     values = c(17, 15, 16),
+                     limits = c("twoLT_unyoked", "twoLT_yoked", "obs_NA"),
+                     labels = c("twoLT_yoked" = "Two Mu's",
+                                "twoLT_unyoked" = "Three Mu's",
+                                "obs_NA" = "Observed")
+                     ) +
+  guides(color = guide_legend(order = 1)) +
   ggtitle("2LT Discrete Race",
           subtitle="Conditional Quantiles (Average)") +
   scale_x_continuous("Response Time (s.)") +
-  guides(shape = FALSE) +
   theme_bw(base_size=16) +
   theme(plot.title = element_text(hjust=.5),
         plot.subtitle = element_text(hjust=.5),
-        strip.background = element_blank()
+        strip.background = element_blank(),
+        legend.key.width = unit(2,"line")
         )
 ```
 
