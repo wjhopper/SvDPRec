@@ -494,6 +494,14 @@ conditional_quantiles_avg <- group_by(.data = conditional_quantiles,
     ungroup()
 ```
 
+```{r factor_ordering}
+conditional_quantiles_avg <- mutate(conditional_quantiles_avg,
+                                    strength = factor(strength, levels = c("L","W","S"))
+                                    )
+quantiles <- mutate(quantiles, strength = factor(strength, levels = c("L","W","S")))
+```
+
+
 ```{r GOF}
 null_LL <- group_by(obs_p, subject, strength) %>%
   summarise(LL = dmultinom(bin_counts, sum(bin_counts), p, log=TRUE)) %>%
@@ -532,13 +540,10 @@ write.csv(twoHT_DR_GOF_subject,
 
 
 ```{r qp_plot, fig.width=10, fig.height=7}
-conditional_quantiles_avg <- mutate(conditional_quantiles_avg,
-                                    strength = factor(strength, levels = c("L","W","S"))
-                                    )
 
 ggplot(conditional_quantiles_avg,
        aes(x=RT, y=p, color=speeded_correct, linetype=type, shape=type)) +
-  geom_point(size=2) +
+  geom_point(size=2, stroke=1.5) +
   geom_line(size=1) +
   facet_grid(~strength,
              labeller = as_labeller(c("L" = "Lure", "W" = "Weak", "S" = "Strong"))
@@ -549,12 +554,12 @@ ggplot(conditional_quantiles_avg,
                      labels=c("Incorrect", "Correct")) +
   scale_linetype_manual(NULL,
                         values = c(6,5,2,1),
-                          limits=  c("unyoked", "yoked", "yoked_fixed", "obs"),
-                          labels = c("unyoked" = "Three Mu's",
-                                     "yoked" = "Two Mu's",
-                                     "yoked_fixed" = "Two Mu's\nDetect Fixed",
-                                     "obs" = "Observed"
-                                     )
+                        limits=  c("unyoked", "yoked", "yoked_fixed", "obs"),
+                        labels = c("unyoked" = "Three Mu's",
+                                   "yoked" = "Two Mu's",
+                                   "yoked_fixed" = "Two Mu's\nDetect Fixed",
+                                   "obs" = "Observed"
+                                   )
                           ) +
   scale_shape_manual(NULL,
                      values = c(17, 15, 4, 16),
@@ -597,6 +602,7 @@ left_join(twoHT_DR_params_subject,
   kableExtra::collapse_rows(1)
 ```
 
+
 ```{r download_links, results="asis"}
 cat("<ul><li>",
     paste0('<a href="', file.path(files_dir, "parameters.csv"),
@@ -613,59 +619,76 @@ cat("<ul><li>",
 ```
 
 
-
 ```{r subject_plots, fig.width=9, fig.align="center", results="asis"}
 
 for (s in unique(speeded_RT_choice_quantiles$subject)) {
   
   cat(sprintf("<h3>Subject %s</h3>", s))
   
-  subject_params <- filter(twoHT_DR_params_subject, subject == s)
-  kable(subject_params %>%
-          select(model_type, dNew.L, dOld.W, dOld.S, gOld, mu.d, mu.g, sigma, nu, value, G2, p)  %>%
-          mutate(dNew.L = cell_spec(round(dNew.L,3), background=c("#ffffff", "#ff4c4c")),
-                 dOld.W = cell_spec(round(dOld.W,3), background=c("#ffffff", "#ff4c4c")),
-                 dOld.S = cell_spec(round(dOld.S,3), background=c("#ffffff", "#ff4c4c"))),
+  subject_params <- filter(twoHT_DR_params_subject, subject == s) %>%
+    select(-subject) %>%
+    mutate(dNew.L = cell_spec(round(dNew.L, 3), background=c("#ffffff","#ffffff", "#ff4c4c")),
+           dOld.W = cell_spec(round(dOld.W, 3), background=c("#ffffff","#ffffff", "#ff4c4c")),
+           dOld.S = cell_spec(round(dOld.S, 3), background=c("#ffffff","#ffffff", "#ff4c4c"))
+           )
+  
+  kable(subject_params,
         digits = 3,
-        col.names = formatted_names,
+        col.names = formatted_names_map[names(subject_params)],
         escape = FALSE) %>%
     kableExtra::kable_styling(full_width = FALSE) %>%
     print()
   
-  subject_params <- arrange(subject_params, G2)
-  model_diff <- diff(subject_params$G2)
-  p <- pchisq(model_diff, 3, lower.tail = FALSE)
+  subject_GOF <- filter(twoHT_DR_GOF_subject, subject==s) %>%
+    select(-subject)
   
-  cat(sprintf("<p><b>Model Difference:</b> %s - %s = %.3f, p(X<sup>2</sup>) = %.3f",
-              subject_params$model_type[2], subject_params$model_type[1],
-              model_diff, p)
-      )
-  cat("<h4>Detect Parameters Free Model</h4>")
+  kable(subject_GOF,
+        digits = 3,
+        col.names = formatted_names_map[names(subject_GOF)],
+        escape = FALSE) %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  print()
   
   acc_plot <-
-    ggplot(filter(predicted_acc, subject == s, speeded_correct),
-          aes(x=strength, y=p, shape=type, color=strength)) +
-    geom_point(size=2,stroke=2) +
-    scale_shape_manual("",
-                       values = c(16,4),
-                       breaks = c("observed","predicted")
+    ggplot(filter(accuracy, speeded_correct, subject == s),
+           aes(x=strength, y=p, shape=type, color=strength)) +
+    geom_point(size=2, stroke=2,
+               position = position_dodge(.1)
+               ) +
+    scale_shape_manual(NULL,
+                       values = c(17, 15, 4, 16),
+                       limits=  c("unyoked", "yoked", "yoked_fixed", "obs"),
+                       labels = c("unyoked" = "Three Mu's",
+                                  "yoked" = "Two Mu's",
+                                  "yoked_fixed" = "Two Mu's\nDetect Fixed",
+                                  "obs" = "Observed"
+                                  )
                        ) +
     scale_color_discrete(labels = c("L" = "Lure",
                                     "W" = "Weak\nTarget",
-                                    "S" = "Strong\nTarget")
+                                    "S" = "Strong\nTarget"),
+                         breaks = c("L","W","S")
                          ) +
-    scale_y_continuous("Percent Correct", limits = c(0, 1)) +
-    scale_x_discrete(labels = c("L" = "Lure",
-                                "W" = "Weak\nTarget",
-                                "S" = "Strong\nTarget"),
-                     expand = c(0, .2)) +
-    theme(legend.key.height = unit(9, 'mm'))
+    scale_y_continuous("Percent Correct",
+                       limits = c(0, 1),
+                       ) +
+    scale_x_discrete("", labels = c("","",""), expand = c(0, .2)) +
+    theme(legend.key.height = unit(9, 'mm'),
+          # axis.title.x = element_blank(),
+          axis.ticks.x = element_blank(),
+          # axis.text.x = element_blank()
+          )
   
   quantile_plot <- 
-    ggplot(filter(predicted_quantiles, subject == s, quantile != "100%"),
-           aes(x=quantile, y=value, shape=type, color=strength)) +
-    geom_point(size=1.5) +
-    geom_line(aes(group=type)) +
+    ggplot(filter(quantiles, subject == s),
+           aes(x=quantile, y=RT, shape=type, color=strength)
+           ) +
+    geom_point(size=1.5,
+               position = position_dodge(.25)
+               ) +
+    geom_line(aes(group=type),
+              position = position_dodge(.25)
+              ) +
     facet_grid(speeded_correct ~ strength,
                labeller = labeller(speeded_correct = as_labeller(
                                     c("TRUE" = "Correct",
@@ -678,14 +701,26 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
                                     )
                                    )
                ) +
-    scale_shape_manual(values=c(16,4),
-                   breaks=c("observed","predicted")
-                   ) +
+    scale_shape_manual(NULL,
+                       values = c(17, 15, 4, 16),
+                       limits=  c("unyoked", "yoked", "yoked_fixed", "obs"),
+                       labels = c("unyoked" = "Three Mu's",
+                                  "yoked" = "Two Mu's",
+                                  "yoked_fixed" = "Two Mu's\nDetect Fixed",
+                                  "obs" = "Observed"
+                                  )
+                       ) +
+    scale_color_discrete(labels = c("L" = "Lure",
+                                    "W" = "Weak\nTarget",
+                                    "S" = "Strong\nTarget"),
+                         breaks = c("L","W","S")
+                         ) +
     scale_y_continuous("RT Quantile Value (s.)") +
     guides(color=FALSE, shape=FALSE)
   
   gridExtra::grid.arrange(acc_plot, quantile_plot, nrow=1,
-                          widths=c(.35, .65))
+                          widths=c(.27, .73)
+                          )
 }
 ```
 
