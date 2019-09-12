@@ -574,8 +574,8 @@ ggplot(conditional_quantiles_avg,
                      breaks=c("FALSE","TRUE"),
                      labels=c("Incorrect", "Correct")) +
   scale_linetype_discrete(NULL,
-                          labels = c("twoLT_yoked" = "Two LT\nTwo Mu's",
-                                     "twoLT_unyoked" = "Two LT\nThree Mu's",
+                          labels = c("twoLT_yoked" = "Two Mu's",
+                                     "twoLT_unyoked" = "Three Mu's",
                                      "obs_NA" = "Observed")
                           ) +
   ggtitle("2LT Discrete Race",
