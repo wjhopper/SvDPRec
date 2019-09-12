@@ -436,12 +436,11 @@ obs_p <- group_by(.data = speeded_RT_choice_quantiles,
   mutate(p = p*c(rep(sum(bin_counts[!speeded_correct])/sum(bin_counts), 6),
                  rep(sum(bin_counts[speeded_correct])/sum(bin_counts), 6))
          ) %>%
-  ungroup() %>%
-  select(-bin_counts)
+  ungroup()
 
 
 probabilities <- bind_rows(predicted_probabilities,
-                           mutate(obs_p, model = "obs")
+                           select(mutate(obs_p, model = "obs"), -bin_counts)
                            ) %>% 
   rename(type=model)
 
@@ -484,22 +483,22 @@ conditional_quantiles_avg <- group_by(.data = conditional_quantiles,
     ungroup()
 ```
 
-```{r g2}
-null_deviance <- predicted_probabilities %>%
-  select(subject, strength, bin_counts, observed_p) %>%
-  group_by(subject, strength) %>%
-  summarise(LL = dmultinom(bin_counts, sum(bin_counts), observed_p, log=TRUE)) %>%
+```{r GOF}
+null_LL <- group_by(obs_p, subject, strength) %>%
+  summarise(LL = dmultinom(bin_counts, sum(bin_counts), p, log=TRUE)) %>%
   group_by(subject) %>%
-  summarise(null_deviance = -2*sum(LL))
+  summarise(null_LL = sum(LL))
 
-estimated_parameters <- left_join(bind_rows(detect_free = estimated_parameters,
-                                            detect_fixed = detect_fixed_params,
-                                            .id="model_type"),
-                                  null_deviance,
-                                  by = "subject") %>%
-  
-  mutate(G2 = (2*value) - null_deviance,
-         p = pchisq(G2, df = 28, lower.tail = FALSE))
+twoHT_DR_GOF_subject <- select(.data = twoHT_DR_fits,
+                               subject, model, value, fevals, gevals, niter, convcode) %>%
+  mutate(LL = -value) %>%
+  left_join(x = .,  y = null_LL,
+            by = "subject") %>%
+  mutate(G2 = -2*(LL - null_LL)) %>%
+  select(subject, model, LL, null_LL, G2, fevals, gevals, niter, convcode)
+
+twoHT_DR_GOF_sum <- group_by(twoHT_DR_GOF_subject, model) %>%
+  summarise_at(.vars=c("LL", "null_LL", "G2"), "sum")
 ```
 
 ```{r plots, fig.width=9, fig.align="center", results="asis"}
