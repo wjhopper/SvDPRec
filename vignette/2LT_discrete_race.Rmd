@@ -432,7 +432,7 @@ twoLT_DR_GOF_subject <- dplyr::select(.data=twoLT_DR_fits,
   dplyr::select(subject, model, LL, null_LL, G2, df, p, fevals, gevals, niter, convcode)
 
 twoLT_DR_GOF_sum <- group_by(twoLT_DR_GOF_subject, model) %>%
-  summarise_at(.vars=c("LL", "null_LL", "G2", "df"), "mean")
+  summarise_at(.vars=c("LL", "null_LL", "G2", "df"), "sum")
 ```
 
 ```{r condition_wise_parameters}
