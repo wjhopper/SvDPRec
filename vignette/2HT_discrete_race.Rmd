@@ -445,7 +445,7 @@ probabilities <- bind_rows(predicted_probabilities,
   rename(type=model)
 
 
-accuracy <- group_by(predicted_probabilities,
+accuracy <- group_by(probabilities,
                      type, subject, strength, speeded_correct
                      ) %>%
   summarise(p = sum(p)) %>%
@@ -500,6 +500,75 @@ twoHT_DR_GOF_subject <- select(.data = twoHT_DR_fits,
 twoHT_DR_GOF_sum <- group_by(twoHT_DR_GOF_subject, model) %>%
   summarise_at(.vars=c("LL", "null_LL", "G2"), "sum")
 ```
+
+```{r save_outputs, eval=isTRUE(getOption('knitr.in.progress'))}
+files_dir <- paste0(tools::file_path_sans_ext(knitr::current_input()),
+                    "_files"
+                    )
+if (!dir.exists(files_dir)) {
+  dir.create(files_dir)
+}
+
+write.csv(twoLT_DR_params_subject,
+          file = file.path(files_dir, "parameters.csv"),
+          row.names = FALSE
+          )
+write.csv(twoLT_DR_params_scaled_subject,
+          file = file.path(files_dir, "scaled_parameters.csv"),
+          row.names = FALSE
+          )
+write.csv(twoLT_DR_GOF_subject,
+          file = file.path(files_dir, "GOF.csv"),
+          row.names = FALSE
+          )
+```
+
+
+```{r qp_plot, fig.width=10, fig.height=7}
+conditional_quantiles_avg <- mutate(conditional_quantiles_avg,
+                                    strength = factor(strength, levels = c("L","W","S"))
+                                    )
+
+ggplot(conditional_quantiles_avg,
+       aes(x=RT, y=p, color=speeded_correct, linetype=type, shape=type)) +
+  geom_point(size=2) +
+  geom_line(size=1) +
+  facet_grid(~strength,
+             labeller = as_labeller(c("L" = "Lure", "W" = "Weak", "S" = "Strong"))
+             ) +
+  scale_color_manual("Accuracy",
+                     values = RColorBrewer::brewer.pal(3, 'Set1')[1:2],
+                     breaks=c("FALSE","TRUE"),
+                     labels=c("Incorrect", "Correct")) +
+  scale_linetype_manual(NULL,
+                        values = c(6,5,2,1),
+                          limits=  c("unyoked", "yoked", "yoked_fixed", "obs"),
+                          labels = c("unyoked" = "Three Mu's",
+                                     "yoked" = "Two Mu's",
+                                     "yoked_fixed" = "Two Mu's\nDetect Fixed",
+                                     "obs" = "Observed"
+                                     )
+                          ) +
+  scale_shape_manual(NULL,
+                     values = c(17, 15, 4, 16),
+                     limits=  c("unyoked", "yoked", "yoked_fixed", "obs"),
+                     labels = c("unyoked" = "Three Mu's",
+                                "yoked" = "Two Mu's",
+                                "yoked_fixed" = "Two Mu's\nDetect Fixed",
+                                "obs" = "Observed"
+                                )
+                        ) +
+  scale_x_continuous("Response Time (s.)") +
+  ggtitle("2HT Discrete Race",
+          subtitle="Conditional Quantiles (Average)") +
+  theme_bw(base_size=16) +
+  theme(plot.title = element_text(hjust=.5),
+        plot.subtitle = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.size = unit(1.5, 'lines')
+        )
+```
+
 
 ```{r plots, fig.width=9, fig.align="center", results="asis"}
 
