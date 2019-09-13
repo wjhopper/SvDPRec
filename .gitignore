@@ -9,3 +9,4 @@ packrat/lib*/
 src/libs/
 .sass-cache/
 _site/
+.jekyll-metadata
