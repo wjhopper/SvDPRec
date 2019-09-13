@@ -619,7 +619,7 @@ cat("<ul><li>",
 ```
 
 
-```{r subject_plots, fig.width=9, fig.align="center", results="asis"}
+```{r subject_plots, fig.width=11, fig.align="center", results="asis"}
 
 for (s in unique(speeded_RT_choice_quantiles$subject)) {
   
@@ -653,7 +653,7 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
     ggplot(filter(accuracy, speeded_correct, subject == s),
            aes(x=strength, y=p, shape=type, color=strength)) +
     geom_point(size=2, stroke=2,
-               position = position_dodge(.1)
+               position = position_dodge(.25)
                ) +
     scale_shape_manual(NULL,
                        values = c(17, 15, 4, 16),
@@ -667,16 +667,17 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
     scale_color_discrete(labels = c("L" = "Lure",
                                     "W" = "Weak\nTarget",
                                     "S" = "Strong\nTarget"),
-                         breaks = c("L","W","S")
+                         limits = c("L","W","S")
                          ) +
     scale_y_continuous("Percent Correct",
                        limits = c(0, 1),
                        ) +
-    scale_x_discrete("", labels = c("","",""), expand = c(0, .2)) +
+    scale_x_discrete("", labels = c("","",""),
+                     limits = c("L","W","S"),
+                     expand = c(0, .2)
+                     ) +
     theme(legend.key.height = unit(9, 'mm'),
-          # axis.title.x = element_blank(),
           axis.ticks.x = element_blank(),
-          # axis.text.x = element_blank()
           )
   
   quantile_plot <- 
@@ -713,7 +714,7 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
     scale_color_discrete(labels = c("L" = "Lure",
                                     "W" = "Weak\nTarget",
                                     "S" = "Strong\nTarget"),
-                         breaks = c("L","W","S")
+                         limits = c("L","W","S")
                          ) +
     scale_y_continuous("RT Quantile Value (s.)") +
     guides(color=FALSE, shape=FALSE)
