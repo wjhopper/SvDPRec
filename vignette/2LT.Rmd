@@ -183,17 +183,21 @@ twoLT_fits <- bind_rows(twoLT_fit_optimx) %>%
 
 parameter_names <- colnames(coef(twoLT_fit_optimx[[1]])) 
 
-twoLT_params <- select(.data = twoLT_fits, subject, !!!parameter_names) %>%
+twoLT_params <- select(.data = twoLT_fits, subject, !!!parameter_names)
+
+twoLT_params_scaled <- select(.data = twoLT_fits, subject, !!!parameter_names) %>%
   rowwise() %>%
   do({
-    data.frame(subject = .$subject,
-               as.list(parameter_scaling(unlist(.[parameter_names]))),
-               stringsAsFactors = FALSE
-               )
+      data.frame(subject = .$subject,
+                 as.list(parameter_scaling(unlist(.[parameter_names]))),
+                 stringsAsFactors = FALSE
+                 )
     }) %>%
   ungroup()
 
-twoLT_avg_params <- summarise_if(twoLT_params,  is.numeric, .funs = "mean")
+twoLT_params_avg <- summarise_if(twoLT_params,  is.numeric, .funs = "mean")
+
+twoLT_params_scaled_avg <- summarise_if(twoLT_params_scaled,  is.numeric, .funs = "mean")
 
 twoLT_GOF <- select(twoLT_fits, subject, LL = value, fevals, gevals, niter, convcode) %>%
   mutate(LL = -LL) %>%
@@ -211,7 +215,7 @@ rm(twoLT_fits)
 
 ```{r twoLT_predictions, dependson="2LT_fit"}
 twoLT_point_predictions <-
-  gather(twoLT_params, -subject, key="parameter", value="value") %>%
+  gather(twoLT_params_scaled, -subject, key="parameter", value="value") %>%
   arrange(subject) %>%
   group_by(subject) %>%
   transmute(x = list(as.data.frame(
@@ -232,6 +236,31 @@ ROC_point_predictions <- bind_rows(obs = obs_ROC_data,
   arrange(subject, strength,pOld, type)
 
 ```
+
+
+```{r save_outputs, eval=isTRUE(getOption('knitr.in.progress'))}
+files_dir <- paste0(tools::file_path_sans_ext(knitr::current_input()),
+                    "_files"
+                    )
+if (!dir.exists(files_dir)) {
+  dir.create(files_dir)
+}
+
+write.csv(twoLT_params,
+          file = file.path(files_dir, "parameters.csv"),
+          row.names = FALSE
+          )
+write.csv(twoLT_params_scaled,
+          file = file.path(files_dir, "scaled_parameters.csv"),
+          row.names = FALSE
+          )
+write.csv(twoLT_GOF,
+          file = file.path(files_dir, "GOF.csv"),
+          row.names = FALSE
+          )
+```
+
+
 
 ```{r twoLT_plots, fig.width=10, fig.height=10, dependson="2LT_fit"}
 ggplot(ROC_point_predictions,
@@ -264,8 +293,8 @@ ggplot(ROC_point_predictions,
 ```
 
 ```{r twoLT_parameters, dependson="2LT_fit"}
-bind_rows(twoLT_params,
-          mutate(twoLT_avg_params, subject = "Mean")
+bind_rows(twoLT_params_scaled,
+          mutate(twoLT_params_scaled_avg, subject = "Mean")
           ) %>%
   select(subject, !!!parameter_names) %>%
   kable(type="HTML", digits=3,
@@ -282,6 +311,25 @@ bind_rows(select(.data = twoLT_GOF, subject, LL, null_LL, calc_G2),
   kable(type="HTML", digits=3,
         col.names = c("Subject", "LL","Null LL","G<sup>2</sup>"),
         escape = FALSE) %>%
-  kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "left") %>%
   column_spec(1, bold = TRUE)
+```
+
+```{r download_links, results="asis"}
+cat("<ul><li>",
+    paste0('<a  href="', file.path(files_dir, "scaled_parameters.csv"),
+           '">Download Scaled Parameters</a>'
+           ),
+    "</li><li>",
+    paste0('<a href="', file.path(files_dir, "parameters.csv"),
+           '">Download Raw Parameters</a>'
+           ),
+    "</li><li>",
+    paste0('<a href="',
+           file.path(files_dir, "GOF.csv"),
+           '">Download GOF Statistics</a>'
+       ),
+    "</li></ul>",
+    sep=""
+    )
 ```
