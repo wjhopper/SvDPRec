@@ -541,7 +541,7 @@ twoHT_ROC_subject <- twoHT_plus_DR_params_subject %>%
   filter(HR <= 1)
 
 
-twoHT_ROC_subject <- twoHT_plus_DR_params_avg %>%
+twoHT_ROC_avg <- twoHT_plus_DR_params_avg %>%
   select(model, dNew.L, dOld.W, dOld.S) %>%
   rowwise() %>%
   mutate(twoHT = list(
@@ -617,6 +617,38 @@ twoHT_plus_DR_GOF_sum <- group_by(twoHT_plus_DR_GOF_subject, model) %>%
 ```
 
 
+```{r ROC_avg_plot, fig.width=7, fig.height=7, dependson="delayed_acc_predictions"}
+ggplot(twoHT_ROC_avg,
+       aes(x=FAR, y=HR, color=strength)) +
+  geom_line(aes(linetype=model),
+            size=.8
+            ) +
+  geom_point(aes(shape = factor(pOld)),
+             data=obs_ROC_avg
+             ) +
+  scale_x_continuous("False Alarm Rate",
+                     limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)
+                     ) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
+  scale_shape_discrete("pOld") +
+  scale_linetype_discrete(limits = c("unyoked", "yoked"),
+                          labels = c("yoked" = "Two Mu's",
+                                     "unyoked" = "Three Mu's"
+                                     )
+                          ) +
+  guides(colour = guide_legend(override.aes = list(size = 4)),
+         shape = guide_legend(override.aes = list(size = 4))) +
+  coord_fixed() +
+  ggtitle("Predicted ROC for delayed judgments") +
+  theme_bw(base_size = 16) +
+  theme(legend.position = c(.65, .2),
+        legend.box = "horizontal"
+        )
+```
+
+
 ```{r QP_plot, fig.width=10, fig.height=7, dependson=c("speeded_quantiles","speeded_accuracy")}
 ggplot(conditional_quantiles_avg,
        aes(x=RT, y=p, color=speeded_correct, linetype=type, shape=type)) +
@@ -656,7 +688,7 @@ ggplot(conditional_quantiles_avg,
 ```
 
 
-```{r ROC, cache=TRUE, dependson="fit", fig.height=12, fig.width=9}
+```{r ROC_subject_plot, dependson="delayed_acc_predictions", fig.height=12, fig.width=9}
 ggplot(twoHT_ROC_subject,
        aes(x=FAR, y=HR, color=strength)) +
   geom_line(aes(linetype=model),
@@ -677,6 +709,11 @@ ggplot(twoHT_ROC_subject,
   scale_y_continuous("Hit Rate", limits = c(0,1)) +
   scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
   scale_shape_discrete("pOld") +
+  scale_linetype_discrete(limits = c("unyoked", "yoked"),
+                          labels = c("yoked" = "Two Mu's",
+                                     "unyoked" = "Three Mu's"
+                                     )
+                          ) +
   guides(colour = guide_legend(override.aes = list(size = 4)),
          shape = guide_legend(override.aes = list(size = 4))) +
   coord_fixed() +
