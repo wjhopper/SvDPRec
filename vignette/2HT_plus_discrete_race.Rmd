@@ -688,6 +688,32 @@ ggplot(conditional_quantiles_avg,
 ```
 
 
+```{r param_summary_tables, dependson="parameters"}
+
+formatted_names_map <- c(subject="Subject", model="model", dNew.L="DN<sub>L</sub>", dOld.W="DO<sub>W</sub>", 
+                         dOld.S="DO<sub>S</sub>", gOld = "GO", gC="GO<sub>C</sub>", gN="GO<sub>N</sub>",
+                         gL="GO<sub>L</sub>", mu.do="μ<sub>D</sub>", mu.g="μ<sub>G</sub>",
+                         mu.dn="μ<sub>DN</sub>", sigma="\U03C3", nu="v", G2="G<sup>2</sup>", LL="LL",
+                         null_LL="Null LL", df="df", p="p(X<sup>2</sup>)",fevals="fevals",
+                         gevals="gevals", niter="niter", convcode="convcode"
+                         )
+
+
+left_join(twoHT_plus_DR_params_subject,
+          select(twoHT_plus_DR_GOF_subject, subject, model, G2),
+          by=c("subject", "model")
+          ) %>%
+  kable(digits=3,
+        col.names = formatted_names_map[names(.)],
+        escape=FALSE,
+        ) %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::column_spec(1:2, bold=TRUE) %>%
+  kableExtra::collapse_rows(1)
+```
+
+
+
 ```{r ROC_subject_plot, dependson="delayed_acc_predictions", fig.height=12, fig.width=9}
 ggplot(twoHT_ROC_subject,
        aes(x=FAR, y=HR, color=strength)) +
@@ -725,14 +751,6 @@ ggplot(twoHT_ROC_subject,
 ```
 
 ```{r RT_plots, dependson="fit", fig.width=10, results="asis"}
-
-formatted_names_map <- c(subject="Subject", model="model", dNew.L="DN<sub>L</sub>", dOld.W="DO<sub>W</sub>", 
-                         dOld.S="DO<sub>S</sub>", gOld = "GO", gC="GO<sub>C</sub>", gN="GO<sub>N</sub>",
-                         gL="GO<sub>L</sub>", mu.do="μ<sub>D</sub>", mu.g="μ<sub>G</sub>",
-                         mu.dn="μ<sub>DN</sub>", sigma="\U03C3", nu="v", G2="G<sup>2</sup>", LL="LL",
-                         null_LL="Null LL", df="df", p="p(X<sup>2</sup>)",fevals="fevals",
-                         gevals="gevals", niter="niter", convcode="convcode"
-                         )
 
 for (s in unique(twoHT_plus_DR_params_subject$subject)) {
   
