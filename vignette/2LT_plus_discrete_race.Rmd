@@ -441,30 +441,90 @@ subjectwise_datalist <- Map(
   )
 ```
 
+
+```{r starting_parameters, cache.extra = c(tools::md5sum(file.path("2LT_files","parameters.csv")),tools::md5sum(file.path("2LT_discrete_race_files","parameters.csv")))}
+
+neutral <- c("DO_L"=0, "FD_L"=0, "DO_W"=0, "FD_W"=0, "DO_S" = 0, "FD_S" = 0,
+             "b"=0.5, "b_C" = 1, "b_N" = 0.5, "b_L" = 0,
+             "mu.do" = .5, "mu.g" = .75, "mu.dn" = .5, "sigma" = .25, "nu" = .25
+             )
+
+theta <- crossing(subject = unique(obs_ROC_data$subject),
+                  model = c("yoked", "unyoked"),
+                  as.data.frame(as.list(neutral))
+                  )
+
+twoLT_best_fit <- read.csv(file.path(root_dir, "vignette", "2LT_files", "parameters.csv"),
+                           stringsAsFactors = FALSE
+                           ) %>%
+  mutate(subject = as.character(subject)) %>%
+  rename(b_C = GO_Cons, b_N = GO_Neut, b_L = GO_Lib) %>%
+  crossing(model = c("yoked", "unyoked")) %>%
+  left_join(x =.,
+            y = select(theta, subject, model, b,  mu.do, mu.g, mu.dn, sigma, nu),
+            by=c("subject", "model")
+            )
+
+twoLT_DR_best_fit <- read.csv(file.path(root_dir, "vignette", "2LT_discrete_race_files", "parameters.csv"),
+                              stringsAsFactors = FALSE
+                              ) %>%
+  mutate(subject = as.character(subject),
+         sigma = replace(sigma, sigma == .01, .02),
+         sigma = replace(sigma, sigma == .5, .49),
+         mu.g = replace(mu.g, mu.g == 2, 1.99)
+         ) %>%
+  select(subject, model, b, mu.do, mu.g, mu.dn, sigma, nu) %>%
+  left_join(x =.,
+            y = select(theta, subject, model, DO_L, FD_L, DO_W, FD_W, DO_S, FD_S, b_C, b_N, b_L),
+            by=c("subject", "model")
+            )
+
+theta <- bind_rows(theta, twoLT_best_fit, twoLT_DR_best_fit)
+rm(twoLT_best_fit, twoLT_DR_best_fit)
+```
+
+
+
 ```{r fit_two_mu, dependson=c("cell_counts","discrete_race_exgaussians", "objective_functions")}
 
 twoLT_plus_DR_fits_twoMu <- foreach(sub = subjectwise_datalist,
                                     .packages = c("optimx", "gamlss.dist")
                                     ) %dopar%
   {
-    theta <- c("DO_L"=0.01, "FD_L"=0.01, "DO_W"=0.01, "FD_W"=0.01, "DO_S" = 0.01, "FD_S" = 0.01,
-               "b"=0.5, "b_C" = 1, "b_N" = 0.5, "b_L" = 0,
-               "mu.do" = .5, "mu.g" = .75, "sigma" = .25, "nu" = .25
-               )
-    fit <- optimx(theta,
-                  fn = twoLT_plus_DR,
-                  method = c("nmkb","nlminb"),
-                  itnmax = 1000,
-                  lower = c(-Inf,-Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, 0.01, 0.01, .01, .01),
-                  upper = c(Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf, 2,    2,    .5,  .5),
-                  control = list(kkt = FALSE, follow.on=TRUE),
-                  data = sub,
-                  p_names = names(theta)
-                  )
+    subject <- sub$speeded$subject[1]
+    
+    x <- theta[theta$subject == subject & theta$model == "yoked", c(-1, -2)] # drop subject and model columns
+    x$mu.dn <- NULL # To fit yoked model, don't include mu.dn column
+    
+    best_fit <- Inf
+    best <- NULL
+    
+    for (i in 1:nrow(x)) {
+      starting <- unlist(x[i, ])
+      fit <- optimx(starting,
+                    fn = twoLT_plus_DR,
+                    method = c("nmkb","nlminb"),
+                    itnmax = c(500, 2000),
+                    lower = c(-Inf,-Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, 0.01, 0.01, .01, .01),
+                    upper = c(Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf, 2,    2,    .5,  1),
+                    control = list(kkt = FALSE, follow.on=TRUE),
+                    data = sub,
+                    p_names = names(starting)
+                    )
 
-    fit <- fit[2,]
-    fit$subject <- sub$speeded$subject[1]
-    fit
+      fit <- fit[2,]
+      if (fit$value < best_fit) {
+        best_fit <- fit$value
+        best <- fit
+      }
+    }
+    
+    if (is.null(best)) {
+      best <- fit
+    }
+    
+    best$subject <- subject
+    return(best)
   }
 ```
 
@@ -475,24 +535,38 @@ twoLT_plus_DR_fits_threeMu <- foreach(sub = subjectwise_datalist,
                                       .packages = c("optimx", "gamlss.dist")
                                       ) %dopar%
   {
-    theta <- c("DO_L"=0.01, "FD_L"=0.01, "DO_W"=0.01, "FD_W"=0.01, "DO_S" = 0.01, "FD_S" = 0.01,
-               "b"=0.5, "b_C" = 1, "b_N" = 0.5, "b_L" = 0,
-               "mu.do" = .5, "mu.g" = .75, "mu.dn" = .5, "sigma" = .25, "nu" = .25
-               )
-    fit <- optimx(theta,
-                  fn = twoLT_plus_DR,
-                  method = c("nmkb","nlminb"),
-                  itnmax = 1000,
-                  lower = c(-Inf,-Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, 0.01, 0.01, 0.01, .01, .01),
-                  upper = c(Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf, 2,    2,    2,    .5,  1),
-                  control = list(kkt = FALSE, follow.on=TRUE),
-                  data = sub,
-                  p_names = names(theta)
-                  )
+    subject <- sub$speeded$subject[1]
+    
+    x <- theta[theta$subject == subject & theta$model == "unyoked", c(-1, -2)] # drop subject and model columns
 
-    fit <- fit[2,]
-    fit$subject <- sub$speeded$subject[1]
-    fit
+    best_fit <- Inf
+    best <- NULL
+    
+    for (i in 1:nrow(x)) {
+      starting <- unlist(x[i, ])
+      fit <- optimx(starting,
+                    fn = twoLT_plus_DR,
+                    method = c("nmkb","nlminb"),
+                    itnmax = c(500, 2000),
+                    lower = c(-Inf,-Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, -Inf, 0.01, 0.01, 0.01, .01, .01),
+                    upper = c(Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf,  Inf, 2,    2,    2,    .5,  1),
+                    control = list(kkt = FALSE, follow.on=TRUE),
+                    data = sub,
+                    p_names = names(starting)
+                    )
+      fit <- fit[2,]
+      if (fit$value < best_fit) {
+        best_fit <- fit$value
+        best <- fit
+      }
+    }
+    
+    if (is.null(best)) {
+      best <- fit
+    }
+    
+    best$subject <- subject
+    return(best)
   }
 ```
 
@@ -554,7 +628,7 @@ condition_wise_params <- bind_rows(mutate(strength_wise_params, speeded_correct 
   mutate(mu.dn = coalesce(mu.dn, mu.do))
 ```
 
-```{r GOF, dependson="fit"}
+```{r GOF, dependson=c("fit_two_mu", "fit_three_mu")}
 speeded_RT_LL <- speeded_RT_choice_quantiles %>%
   group_by(subject, strength) %>%
   mutate(observed_p = bin_counts/sum(bin_counts)) %>%
