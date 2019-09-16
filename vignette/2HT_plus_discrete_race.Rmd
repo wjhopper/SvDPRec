@@ -366,7 +366,6 @@ twoHT_plus_DR_fits_twoMu <- foreach(sub = subjectwise_datalist,
   theta <- c("dNew.L" = .5, "dOld.W" = .5, "dOld.S"=.75, 
              "gOld"=.5, "gC" = .5, "gN" = .5, "gL" = .5,
              "mu.do" = .5, "mu.g" = .75, "sigma" = .25, "nu" = .25
-             
              )
     fit <- optimx(theta,
                   fn = twoHT_DR_LL_sum,
@@ -391,9 +390,9 @@ twoHT_plus_DR_fits_threeMu <- foreach(sub = subjectwise_datalist,
                                       ) %dopar%
   {
 
-    theta <- c("dNew.L" = .5, "dOld.W" = .5, "dOld.S"=.75, "gOld"=.5,
-               "mu.do" = .5, "mu.g" = .75, "mu.dn" = .5, "sigma" = .25, "nu" = .25,
-               "gC" = .5, "gN" = .5, "gL" = .5
+    theta <- c("dNew.L" = .5, "dOld.W" = .5, "dOld.S"=.75,
+               "gOld"=.5,"gC" = .5, "gN" = .5, "gL" = .5,
+               "mu.do" = .5, "mu.g" = .75, "mu.dn" = .5, "sigma" = .25, "nu" = .25
                )
     fit <- optimx(theta,
                   fn = twoHT_DR_LL_sum,
@@ -430,7 +429,7 @@ twoHT_plus_DR_fits <- bind_rows("yoked" = bind_rows(twoHT_plus_DR_fits_twoMu),
 ```
 
 
-```{r parameters, dependson=c("fixed_detect_yoked", "unyoked_fit", "yoked_fit")}
+```{r parameters, dependson=c("fit_two_mu", "fit_three_mu")}
 
 param_names <- colnames(coef(twoHT_plus_DR_fits_threeMu[[1]]))
 
@@ -483,7 +482,7 @@ accuracy <- group_by(probabilities,
   ungroup()
 ```
 
-```{r speeded_quantiles, dependson=c("parameters", "predicted_probabilities")}
+```{r speeded_quantiles, dependson=c("parameters", "speeded_acc")}
 predicted_quantiles <- mapply(DR_quantiles,
                               fitted_param_list,
                               lapply(subjectwise_datalist, `[[`, "speeded"),
@@ -514,7 +513,7 @@ conditional_quantiles_avg <- group_by(.data = conditional_quantiles,
     ungroup()
 ```
 
-```{r factor_ordering}
+```{r factor_ordering, dependson="speeded_quantiles"}
 conditional_quantiles_avg <- mutate(conditional_quantiles_avg,
                                     strength = factor(strength, levels = c("L","W","S"))
                                     )
@@ -522,7 +521,7 @@ quantiles <- mutate(quantiles, strength = factor(strength, levels = c("L","W","S
 ```
 
 
-```{r delayed_acc_predictions, cache=TRUE, dependson="fit"}
+```{r ROC_predictions, dependson="parameters"}
 FAR_points <- seq(0, 1, .01)
 
 twoHT_ROC_subject <- twoHT_plus_DR_params_subject %>%
@@ -617,7 +616,7 @@ twoHT_plus_DR_GOF_sum <- group_by(twoHT_plus_DR_GOF_subject, model) %>%
 ```
 
 
-```{r ROC_avg_plot, fig.width=7, fig.height=7, dependson="delayed_acc_predictions"}
+```{r ROC_avg_plot, fig.width=7, fig.height=7, dependson="ROC_predictions"}
 ggplot(twoHT_ROC_avg,
        aes(x=FAR, y=HR, color=strength)) +
   geom_line(aes(linetype=model),
@@ -714,7 +713,7 @@ left_join(twoHT_plus_DR_params_subject,
 
 
 
-```{r ROC_subject_plot, dependson="delayed_acc_predictions", fig.height=12, fig.width=9}
+```{r ROC_subject_plot, dependson="ROC_predictions", fig.height=12, fig.width=9}
 ggplot(twoHT_ROC_subject,
        aes(x=FAR, y=HR, color=strength)) +
   geom_line(aes(linetype=model),
@@ -750,7 +749,7 @@ ggplot(twoHT_ROC_subject,
         )
 ```
 
-```{r RT_plots, dependson="fit", fig.width=10, results="asis"}
+```{r RT_plots, dependson=c("parameters", "GOF", "speeded_quantiles","speeded_accuracy"), fig.width=10, results="asis"}
 
 for (s in unique(twoHT_plus_DR_params_subject$subject)) {
   
