@@ -340,7 +340,7 @@ twoHT_DR_LL_sum <- function(theta, data, fixed=NULL, p_names=NULL) {
 }
 ```
 
-```{r start_cluster, dependson=c("discrete_race_exgaussians", "objective_functions")}
+```{r start_cluster, dependson=c("discrete_race_exgaussians", "objective_functions", "fit_two_mu", "fit_three_mu")}
 cl <- parallel::makeCluster(parallel::detectCores(),
                             outfile = "",
                             methods = FALSE)
@@ -410,7 +410,7 @@ twoHT_plus_DR_fits_threeMu <- foreach(sub = subjectwise_datalist,
 ```
 
 
-```{r stop_cluster}
+```{r stop_cluster, dependson=c("discrete_race_exgaussians", "objective_functions", "fit_two_mu", "fit_three_mu")}
 parallel::stopCluster(cl)
 ```
 
