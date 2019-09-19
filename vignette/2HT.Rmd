@@ -9,9 +9,9 @@ output:
 editor_options: 
   chunk_output_type: console
 ---
-```{css css, echo=FALSE}
+```{css css, echo=FALSE, cache=FALSE}
 .main-container {
-    max-width: 1100px;
+    max-width: 1200px;
   }
 ```
 
@@ -183,43 +183,127 @@ rm(detect_params, bias_params)
 ```
 
 
-```{r ROC_plot, results="asis", dependson="stan_model"}
-for (s in unique(twoHT_stan_ROC_data$subject)) {
-  
-  cat(sprintf("<h3>Subject %s</h3>", s))
-  
-  filter(twoHT_stan_subject_param_summaries, subject == s) %>%
-    select(-.width, -.interval, -.point) %>%
-    gather("param", "value", -subject) %>%
-    separate(param, into = c("param","stat"), sep = "\\.",
-             fill="right") %>%
-    spread(stat, value) %>%
-    select(param, mean = `<NA>`, lower, upper) %>%
-    mutate(lower = round(lower, 3),
-           upper = round(upper, 3),
-           HDI = paste("[", lower, ", ", upper, "]", sep="")
-           ) %>%
-    select(param, mean, HDI) %>%
-    knitr::kable(digits=3,
-                 type="html",
-                 col.names = c("Parameter", "Posterior Mean", "HDI")) %>%
-    kable_styling(full_width = FALSE, position = "float_left") %>%
-    column_spec(1, bold=TRUE) %>%
-    print()
-  
-    ROC <- ggplot(filter(twoHT_stan_ROC_data, subject == s),
-                  aes(x=FAR, y=HR, linetype=type, shape=pOld)) +
-      geom_point(size=2) +
-      geom_line(aes(group=type), size=.8) +
-      facet_grid(~strength) +
-      scale_x_continuous(limits = c(0, 1)) +
-      scale_y_continuous(limits = c(0, 1)) +
-      coord_equal()
-    print(ROC)
+```{r column_names_map}
+formatted_names_map <- c(subject="Subject", model="model", DN="DN<sub>L</sub>", DO_W="DO<sub>W</sub>", 
+                         DO_S="DO<sub>S</sub>", GO_Cons="GO<sub>C</sub>", GO_Neut="GO<sub>N</sub>",
+                         GO_Lib="GO<sub>L</sub>", G2="G<sup>2</sup>", LL="LL",
+                         null_LL="Null LL", df="df", p="p(X<sup>2</sup>)",fevals="fevals",
+                         gevals="gevals", niter="niter", convcode="convcode", mean="Mean",
+                         HDI="HDI"
+                         )
+```
+
+
+
+```{r ROC_plot, results="asis", dependson="stan_model", fig.width=10, fig.height=10}
+
+ROC <- ggplot(twoHT_stan_ROC_data,
+              aes(x=FAR, y=HR, linetype=type, shape=pOld, color=strength)) +
+  geom_point(size=2) +
+  geom_line(aes(group=interaction(type, strength)), size=.8) +
+  facet_wrap(~subject, ncol=4, labeller = label_both) +
+  scale_x_continuous("False Alarm Rate",
+                     limits = c(0,1),
+                     breaks = c(0,0.25, 0.5, 0.75, 1),
+                     labels = c("0",".25", ".5", ".75", "1")
+                     ) +
+  scale_y_continuous("Hit Rate",
+                     limits = c(0,1),
+                     breaks = c(0,0.25, 0.5, 0.75, 1),
+                     labels = c("0",".25", ".5", ".75", "1")
+                     ) +
+  scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
+  scale_linetype_discrete(NULL,
+                          limits = c("obs", "pred"),
+                          labels = c("obs" = "Observed",
+                                     "pred" = "Bayesian\nTwo HT"
+                                     )
+                          ) +
+  coord_equal() +
+  ggtitle("Predicted ROC for delayed judgments") +
+  theme_bw(base_size = 16) +
+  theme(legend.position = c(.75, .1),
+        legend.box = "horizontal"
+        )
+print(ROC)
+
+
+param_table <- 
+  select(twoHT_stan_subject_param_summaries,
+         -.width, -.interval, -.point) %>%
+  gather("param", "value", -subject) %>%
+  separate(param, into = c("param","stat"), sep = "\\.",
+           fill="right") %>%
+  spread(stat, value) %>%
+  select(subject, param, mean = `<NA>`, lower, upper) %>% 
+  mutate(lower = round(lower, 3),
+         upper = round(upper, 3),
+         HDI = paste("[", lower, ", ", upper, "]", sep="")
+         ) %>%
+  select(subject, param, mean, HDI) %>%
+  nest(mean, HDI, .key = "x") %>%
+  spread(key="param", value = x)
+
+top_level_labels <- formatted_names_map[names(param_table)[-1]]
+
+param_table <- unnest(param_table)
+
+knitr::kable(param_table,
+             digits=3, type="html", escape=FALSE,
+             col.names = sub("[[:digit:]]+$", "", tools::toTitleCase(names(param_table)))
+             ) %>%
+  kable_styling(full_width = FALSE) %>%
+  add_header_above(setNames(c(1, rep(2, length(top_level_labels))),
+                            c(" ", top_level_labels)
+                            ),
+                   escape = FALSE
+                   ) %>%
+  row_spec(0, align = "c") %>%
+  column_spec(1, bold=TRUE) %>%
+  print()
+
+```
+
+```{r save_outputs, cache=FALSE, eval=isTRUE(getOption('knitr.in.progress'))}
+files_dir <- paste0(tools::file_path_sans_ext(knitr::current_input()),
+                    "_files"
+                    )
+if (!dir.exists(files_dir)) {
+  dir.create(files_dir)
 }
 
-rm(ROC, s)
+write.csv(twoHT_stan_subject_param_summaries,
+          file = file.path(files_dir, "subject_parameters.csv"),
+          row.names = FALSE
+          )
+write.csv(twoHT_stan_pop_param_summaries,
+          file = file.path(files_dir, "pop_parameters.csv"),
+          row.names = FALSE
+          )
+save(twoHT_stan_fit, file=file.path(files_dir, "twoHT_stan_posterior.Rdata"))
 ```
+
+
+```{r download_links, cache=FALSE, results="asis"}
+cat("<ul><li>",
+    paste0('<a href="', file.path(files_dir, "subject_parameters.csv"),
+           '">Download Subject Parameters</a>'
+           ),
+    "</li><li>",
+    paste0('<a href="',
+           file.path(files_dir, "pop_parameters.csv"),
+           '">Download Population Parameters</a>'
+       ),
+    "</li><li>",
+    paste0('<a href="',
+           file.path(files_dir, "twoHT_stan_posterior.Rdata"),
+           '">Download Posterior Samples</a>'
+       ),
+    "</li></ul>",
+    sep=""
+    )
+```
+
 
 ## MLE Version
 
