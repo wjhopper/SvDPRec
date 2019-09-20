@@ -213,7 +213,8 @@ formatted_names_map <- c(subject="Subject", model="model", DN="DN<sub>L</sub>", 
 ```{r ROC_plot, results="asis", dependson="stan_model", fig.width=10, fig.height=10}
 
 ROC <- ggplot(twoHT_stan_ROC_points,
-              aes(x=FAR, y=HR, color=strength, shape=pOld)) +
+              aes(x=FAR, y=HR, color=strength, shape=pOld)
+              ) +
   geom_point(size=2) +
   geom_line(aes(linetype=type, group=strength),
             data = filter(twoHT_stan_ROC_points, type=="obs"),
@@ -508,9 +509,9 @@ twoHT_std_sum_GOF <- select(.data = twoHT_std_GOF,
 rm(twoHT_std_fits)
 ```
 
-```{r std_twoHT_predictions, dependson="std_2HT_fit"}
+```{r std_twoHT_ROC_predictions, dependson="std_2HT_fit"}
 
-twoHT_std_sub_ROC_preds <- group_by(twoHT_std_params, subject) %>%
+twoHT_std_sub_ROC_curve <- group_by(twoHT_std_params, subject) %>%
   mutate(twoHT = list(
     data.frame(FAR = rep(FAR_points, 2),
                strength = factor(rep(c("W", "S"), each = length(FAR_points)),
@@ -521,9 +522,10 @@ twoHT_std_sub_ROC_preds <- group_by(twoHT_std_params, subject) %>%
     
     )) %>%
   select(subject, twoHT) %>%
-  unnest()
+  unnest() %>%
+  filter(HR <= 1)
 
-twoHT_std_avg_ROC_preds <- select(twoHT_std_params, -subject) %>%
+twoHT_std_avg_ROC_curve <- select(twoHT_std_params, -subject) %>%
   summarise_all("mean") %>%
   summarise(twoHT = list(
     data.frame(FAR = rep(FAR_points, 2),
@@ -534,33 +536,123 @@ twoHT_std_avg_ROC_preds <- select(twoHT_std_params, -subject) %>%
                ))
     
     )) %>%
-  unnest()
+  unnest() %>%
+  filter(HR <= 1)
+
+
+twoHT_std_sub_ROC_points <- group_by(twoHT_std_params, subject) %>%
+  mutate(x = list(data.frame(
+           twoHT(c("DN"=DN, "DO_W"=DO_W, "DO_S"=DO_S,
+                   "GO_Cons"=GO_Cons, "GO_Neut"=GO_Neut, "GO_Lib"=GO_Lib
+                 )),
+           pOld = c("25%", "50%", "75%"),
+           stringsAsFactors = FALSE
+         ))) %>%
+  select(subject, x) %>%
+  unnest() %>%
+  gather(key="strength", value="HR", HR_W, HR_S) %>%
+  mutate(strength = sub("HR_", "", strength)) %>%
+  filter(HR <= 1) %>%
+  select(subject, pOld, strength, FAR, HR) %>%
+  bind_rows(pred = ., obs = obs_ROC_data, .id = "type")
+
+
+twoHT_std_avg_ROC_points <- select(twoHT_std_params, -subject) %>%
+  summarise_all("mean") %>%
+  mutate(x = list(data.frame(
+           twoHT(c("DN"=DN, "DO_W"=DO_W, "DO_S"=DO_S,
+                   "GO_Cons"=GO_Cons, "GO_Neut"=GO_Neut, "GO_Lib"=GO_Lib
+                 )),
+           pOld = c("25%", "50%", "75%"),
+           stringsAsFactors = FALSE
+         ))) %>%
+  select(x) %>%
+  unnest() %>%
+  gather(key="strength", value="HR", HR_W, HR_S) %>%
+  mutate(strength = sub("HR_", "", strength)) %>%
+  filter(HR <= 1) %>%
+  select(pOld, strength, FAR, HR) %>%
+  bind_rows(pred = ., obs = avg_obs_ROC_data, .id = "type")
 ```
 
-```{r std_twoHT_plots, fig.width=9, dependson="std_2HT_fit"}
-ggplot(filter(twoHT_std_avg_ROC_preds, HR <= 1),
-       aes(x=FAR, y=HR, linetype=strength)) +
-  geom_line(size=1.75) +
-  geom_point(aes(color=factor(pOld)),
-             data = avg_obs_ROC_data,
-             size=4) +
+
+```{r std_twoHT_ROC_avg_plot, fig.width=9, dependson="std_2HT_fit"}
+ggplot(twoHT_std_avg_ROC_points,
+       aes(x=FAR, y=HR, color=strength, shape=pOld)
+              ) +
+  geom_point(size=4) +
+  geom_line(aes(linetype=type, group=strength),
+            data = filter(twoHT_std_avg_ROC_points, type=="obs"),
+            size=1.75
+            ) +
+  geom_line(aes(x=FAR, y=HR, color=strength, linetype=type),
+            data = mutate(twoHT_std_avg_ROC_curve, type="pred"),
+            size=1.75,
+            inherit.aes = FALSE
+            ) +
   scale_x_continuous("False Alarm Rate", limits = c(0,1),
-                     labels = c(0,0.25, 0.5, 0.75, 1)) +
-  scale_y_continuous("Hit Rate", limits = c(0,1)) +
-  scale_linetype_discrete("Item",
-                          labels=c("W" = "'Weak' Target",
-                                   "S" = "'Strong' Target")) +
-  scale_color_manual("p(Old)", values = c("#d82d2d", "#d8d834", "#17b50c")) +
-  guides(colour = guide_legend(override.aes = list(size = 4)),
-         shape = guide_legend(override.aes = list(size = 4))) +
+                     labels = c(0,0.25, 0.5, 0.75, 1)
+                     ) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)
+                     ) +
+  scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
+  scale_linetype_discrete(NULL,
+                          limits = c("pred", "obs"),
+                          labels = c("obs" = "Observed",
+                                     "pred" = "Bayesian\nTwo HT"
+                                     )
+                          ) +
   coord_fixed() +
   ggtitle("Two-HT Model ROC (Average)") +
   theme_bw(base_size = 26) +
   theme(plot.title = element_text(hjust=.5),
         strip.background = element_blank(),
-        legend.key.width = unit(10,"mm"))
-
+        legend.key.size = unit(2, "lines")
+        )
 ```
+
+
+```{r std_twoHT_ROC_sub_plot, fig.width=9, dependson="std_2HT_fit"}
+
+ggplot(twoHT_std_sub_ROC_points,
+       aes(x=FAR, y=HR, color=strength, shape=pOld)
+       ) +
+  geom_point(size=2) +
+  geom_line(aes(linetype=type, group=strength),
+            data = filter(twoHT_std_sub_ROC_points, type=="obs"),
+            size=1) +
+  geom_line(aes(x=FAR, y=HR, color=strength, linetype=type),
+            data = mutate(twoHT_std_sub_ROC_curve, type="pred"),
+            size=1,
+            inherit.aes = FALSE
+            ) +
+  facet_wrap(~subject, ncol=4, labeller = label_both) +
+  scale_x_continuous("False Alarm Rate",
+                     limits = c(0,1),
+                     breaks = c(0,0.25, 0.5, 0.75, 1),
+                     labels = c("0",".25", ".5", ".75", "1")
+                     ) +
+  scale_y_continuous("Hit Rate",
+                     limits = c(0,1),
+                     breaks = c(0,0.25, 0.5, 0.75, 1),
+                     labels = c("0",".25", ".5", ".75", "1")
+                     ) +
+  scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
+  scale_linetype_discrete(NULL,
+                          limits = c("pred", "obs"),
+                          labels = c("obs" = "Observed",
+                                     "pred" = "Bayesian\nTwo HT"
+                                     )
+                          ) +
+  coord_equal() +
+  ggtitle("Predicted ROC for delayed judgments") +
+  theme_bw(base_size = 16) +
+  theme(legend.position = c(.75, .1),
+        legend.box = "horizontal",
+        legend.key.height = unit(1.5, "lines")
+        )
+```
+
 
 ```{r std_twoHT_parameters, dependson="std_2HT_fit"}
 bind_rows(twoHT_std_params,
