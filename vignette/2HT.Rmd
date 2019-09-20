@@ -331,102 +331,7 @@ cat("<ul><li>",
 
 ## MLE Version
 
-### MPT 
-
-```{r 2HT_model_and_data, dependson=c("cell_counts")}
-twoHT_mpt_model <- "
-# Tree for strong items in pOld=25% condition. First 'old', then 'new'
-dS + (1-dS) * gC
-(1-dS)*(1-gC)
-
-# Tree for weak items in pOld=25% condition. First 'old', then 'new'
-dW + (1-dW) * gC
-(1-dW)*(1-gC)
-
-#Tree for lures in pOld=25% condition. First 'old', then 'new'
-(1-dN) * gC
-dN + (1-dN) * (1 - gC)
-
-# Tree for strong items in pOld=50% condition. First 'old', then 'new'
-dS + (1-dS) * gN
-(1-dS)*(1-gN)
-
-# Tree for weak items in pOld=50% condition. First 'old', then 'new'
-dW + (1-dW) * gN
-(1-dW)*(1-gN)
-
-#Tree for lures in pOld=50% condition. First 'old', then 'new'
-(1-dN) * gN
-dN + (1-dN) * (1 - gN)
-
-# Tree for strong items in pOld=75% condition. First 'old', then 'new'
-dS + (1-dS) * gL
-(1-dS)*(1-gL)
-
-# Tree for weak items in pOld=75% condition. First 'old', then 'new'
-dW + (1-dW) * gL
-(1-dW)*(1-gL)
-
-#Tree for lures in pOld=75% condition. First 'old', then 'new'
-(1-dN) * gL
-dN + (1-dN) * (1 - gL)
-"
-
-twoHT_mpt_data_layout <- transmute(delayed_counts_by_sub_bias,
-  subject,
-  pOld,
-  strong_old = H_S,
-  strong_new = S_N - H_S,
-  weak_old = H_W,
-  weak_new = W_N - H_W,
-  lure_old = FA,
-  lure_new = L_N - FA) %>%
-  gather("response","count", -subject, -pOld) %>%
-  unite(condition, pOld, response) %>%
-  spread(condition, count) %>%
-  select(subject,
-         `0.25_strong_old`, `0.25_strong_new`,
-         `0.25_weak_old`, `0.25_weak_new`,
-         `0.25_lure_old`, `0.25_lure_new`,
-         `0.5_strong_old`, `0.5_strong_new`,
-         `0.5_weak_old`, `0.5_weak_new`,
-         `0.5_lure_old`, `0.5_lure_new`,
-         `0.75_strong_old`, `0.75_strong_new`,
-         `0.75_weak_old`, `0.75_weak_new`,
-         `0.75_lure_old`, `0.75_lure_new`) %>%
-  as.data.frame() %>%
-  tibble::column_to_rownames("subject") %>%
-  data.matrix()
-```
-
-```{r 2HT_fit, dependson="2HT_model_and_data"}
-twoHT_mpt_fit <- fit.mpt(data = twoHT_mpt_data_layout,
-                         model.filename = textConnection(twoHT_mpt_model),
-                         show.messages = FALSE)
-rm(twoHT_mpt_data_layout, twoHT_mpt_model)
-```
-
-```{r 2HT_mpt_reporting, dependson="2HT_fit"}
-twoHT_mpt_params <- cbind(twoHT_mpt_fit$parameters$individual[,1,],
-                          twoHT_mpt_fit$parameters$mean[,1, drop=FALSE]
-                          )
-colnames(twoHT_mpt_params) <- c(paste("Subject", 101:114), "Mean")
-twoHT_mpt_params <- t(twoHT_mpt_params)
-
-kable(twoHT_mpt_params, digits=3) %>%
-  kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
-  column_spec(1, bold = TRUE)
-
-twoHT_mpt_GOF <- bind_rows(twoHT_mpt_fit$goodness.of.fit$individual,
-                           twoHT_mpt_fit$goodness.of.fit$sum)
-rownames(twoHT_mpt_GOF) <- c(paste("Subject", 101:114), "Total")
-
-kable(twoHT_mpt_GOF, digits=3) %>%
-  kableExtra::kable_styling(full_width = FALSE, position = "left") %>%
-  column_spec(1, bold = TRUE)
-```
-
-### Standard
+### Standard MLE
 ```{r std_2HT_LL}
 twoHT <- function(theta) {
   
@@ -654,22 +559,127 @@ ggplot(twoHT_std_sub_ROC_points,
 ```
 
 
-```{r std_twoHT_parameters, dependson="std_2HT_fit"}
-bind_rows(twoHT_std_params,
-          mutate(twoHT_std_avg_params, subject = "Mean")
-          ) %>%
-  tibble::column_to_rownames(var="subject") %>%
-  kable(type="HTML", digits=3) %>%
-  kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
-  column_spec(1, bold = TRUE)
+```{r std_twoHT_param_table, dependson="std_2HT_fit"}
+x <- bind_rows(twoHT_std_params,
+               mutate(twoHT_std_avg_params, subject = "Mean/Sum")
+               )
 
-bind_rows(select(.data = twoHT_std_GOF,
-                 subject, LL, null_LL, calc_G2, df, p.value),
-          mutate(.data = twoHT_std_sum_GOF,
-                 subject = "Sum")
+y <- bind_rows(select(.data = twoHT_std_GOF, subject, G2=calc_G2),
+               mutate(select(.data = twoHT_std_sum_GOF, G2=calc_G2),
+                      subject = "Mean/Sum"
+                      )
+               )
+
+left_join(x, y, by = "subject") %>%
+  kable(type="HTML",
+        digits=3,
+        col.names = formatted_names_map[names(.)],
+        escape=FALSE
+        ) %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  column_spec(1, bold = TRUE)
+```
+
+
+### MPT 
+
+```{r 2HT_model_and_data, dependson=c("cell_counts")}
+twoHT_mpt_model <- "
+# Tree for strong items in pOld=25% condition. First 'old', then 'new'
+dS + (1-dS) * gC
+(1-dS)*(1-gC)
+
+# Tree for weak items in pOld=25% condition. First 'old', then 'new'
+dW + (1-dW) * gC
+(1-dW)*(1-gC)
+
+#Tree for lures in pOld=25% condition. First 'old', then 'new'
+(1-dN) * gC
+dN + (1-dN) * (1 - gC)
+
+# Tree for strong items in pOld=50% condition. First 'old', then 'new'
+dS + (1-dS) * gN
+(1-dS)*(1-gN)
+
+# Tree for weak items in pOld=50% condition. First 'old', then 'new'
+dW + (1-dW) * gN
+(1-dW)*(1-gN)
+
+#Tree for lures in pOld=50% condition. First 'old', then 'new'
+(1-dN) * gN
+dN + (1-dN) * (1 - gN)
+
+# Tree for strong items in pOld=75% condition. First 'old', then 'new'
+dS + (1-dS) * gL
+(1-dS)*(1-gL)
+
+# Tree for weak items in pOld=75% condition. First 'old', then 'new'
+dW + (1-dW) * gL
+(1-dW)*(1-gL)
+
+#Tree for lures in pOld=75% condition. First 'old', then 'new'
+(1-dN) * gL
+dN + (1-dN) * (1 - gL)
+"
+
+twoHT_mpt_data_layout <- transmute(delayed_counts_by_sub_bias,
+  subject,
+  pOld,
+  strong_old = H_S,
+  strong_new = S_N - H_S,
+  weak_old = H_W,
+  weak_new = W_N - H_W,
+  lure_old = FA,
+  lure_new = L_N - FA) %>%
+  gather("response","count", -subject, -pOld) %>%
+  unite(condition, pOld, response) %>%
+  spread(condition, count) %>%
+  select(subject,
+         `0.25_strong_old`, `0.25_strong_new`,
+         `0.25_weak_old`, `0.25_weak_new`,
+         `0.25_lure_old`, `0.25_lure_new`,
+         `0.5_strong_old`, `0.5_strong_new`,
+         `0.5_weak_old`, `0.5_weak_new`,
+         `0.5_lure_old`, `0.5_lure_new`,
+         `0.75_strong_old`, `0.75_strong_new`,
+         `0.75_weak_old`, `0.75_weak_new`,
+         `0.75_lure_old`, `0.75_lure_new`) %>%
+  as.data.frame() %>%
+  tibble::column_to_rownames("subject") %>%
+  data.matrix()
+```
+
+```{r 2HT_fit, dependson="2HT_model_and_data"}
+twoHT_mpt_fit <- fit.mpt(data = twoHT_mpt_data_layout,
+                         model.filename = textConnection(twoHT_mpt_model),
+                         show.messages = FALSE)
+rm(twoHT_mpt_data_layout, twoHT_mpt_model)
+```
+
+```{r 2HT_mpt_param_table, dependson="2HT_fit"}
+twoHT_mpt_params <- cbind(twoHT_mpt_fit$parameters$individual[,1,],
+                          twoHT_mpt_fit$parameters$mean[,1, drop=FALSE]
+                          ) %>%
+  `colnames<-`(c(101:114, "Mean/Sum")) %>%
+  t() %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("subject") %>%
+  select(subject, DN = dN, DO_W=dW, DO_S=dS, GO_Cons=gC, GO_Neut=gN, GO_Lib=gL)
+
+
+twoHT_mpt_GOF <- bind_rows(twoHT_mpt_fit$goodness.of.fit$individual,
+                           twoHT_mpt_fit$goodness.of.fit$sum) %>%
+  mutate(subject = c(101:114, "Mean/Sum"))
+
+left_join(twoHT_mpt_params,
+          select(twoHT_mpt_GOF, subject, G2=G.Squared),
+          by = "subject"
           ) %>%
-  tibble::column_to_rownames(var="subject") %>%
-  kable(type="HTML", digits=3) %>%
-  kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
+  kable(type="HTML",
+        digits=3,
+        col.names = formatted_names_map[names(.)],
+        escape=FALSE
+        ) %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
   column_spec(1, bold = TRUE)
 ```
