@@ -578,6 +578,8 @@ left_join(x, y, by = "subject") %>%
         ) %>%
   kableExtra::kable_styling(full_width = FALSE) %>%
   column_spec(1, bold = TRUE)
+
+rm(x,y)
 ```
 
 
@@ -649,12 +651,14 @@ twoHT_mpt_data_layout <- transmute(delayed_counts_by_sub_bias,
   data.matrix()
 ```
 
+
 ```{r 2HT_fit, dependson="2HT_model_and_data"}
 twoHT_mpt_fit <- fit.mpt(data = twoHT_mpt_data_layout,
                          model.filename = textConnection(twoHT_mpt_model),
                          show.messages = FALSE)
 rm(twoHT_mpt_data_layout, twoHT_mpt_model)
 ```
+
 
 ```{r 2HT_mpt_param_table, dependson="2HT_fit"}
 twoHT_mpt_params <- cbind(twoHT_mpt_fit$parameters$individual[,1,],
@@ -683,3 +687,27 @@ left_join(twoHT_mpt_params,
   kableExtra::kable_styling(full_width = FALSE) %>%
   column_spec(1, bold = TRUE)
 ```
+
+
+```{r mpt_vs_std_scatterplot}
+x <- gather(twoHT_std_params, "param", "std", -subject) %>%
+  bind_rows(.,
+            mutate(select(twoHT_std_GOF, subject, std=calc_G2),
+                   param="G2")
+            )
+
+y <- gather(twoHT_mpt_params, "param", "mpt", -subject) %>%
+  bind_rows(.,
+            mutate(select(twoHT_mpt_GOF, subject, mpt=G.Squared),
+                   param="G2")
+            ) %>%
+  filter(subject != "Mean/Sum")
+
+ggplot(full_join(x, y, by = c("subject", "param")),
+       aes(x=std, y=mpt)
+       ) +
+  geom_point() +
+  geom_abline(intercept = 0, slope=1) +
+  facet_wrap(~param, scales = "free")
+```
+
