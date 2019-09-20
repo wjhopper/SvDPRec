@@ -213,12 +213,14 @@ formatted_names_map <- c(subject="Subject", model="model", DN="DN<sub>L</sub>", 
 ```{r ROC_plot, results="asis", dependson="stan_model", fig.width=10, fig.height=10}
 
 ROC <- ggplot(twoHT_stan_ROC_points,
-              aes(x=FAR, y=HR, color=strength)) +
-  geom_point(aes(shape=pOld), size=2) +
-  geom_line(aes(linetype=type)) +
-  geom_line(aes(x=FAR, y=HR, group=strength, color=strength),
-            data = twoHT_stan_ROC_curve,
-            size=.8,
+              aes(x=FAR, y=HR, color=strength, shape=pOld)) +
+  geom_point(size=2) +
+  geom_line(aes(linetype=type, group=strength),
+            data = filter(twoHT_stan_ROC_points, type=="obs"),
+            size=1) +
+  geom_line(aes(x=FAR, y=HR, color=strength, linetype=type),
+            data = mutate(twoHT_stan_ROC_curve, type="pred"),
+            size=1,
             inherit.aes = FALSE
             ) +
   facet_wrap(~subject, ncol=4, labeller = label_both) +
@@ -234,7 +236,7 @@ ROC <- ggplot(twoHT_stan_ROC_points,
                      ) +
   scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
   scale_linetype_discrete(NULL,
-                          limits = c("obs", "pred"),
+                          limits = c("pred", "obs"),
                           labels = c("obs" = "Observed",
                                      "pred" = "Bayesian\nTwo HT"
                                      )
@@ -243,7 +245,8 @@ ROC <- ggplot(twoHT_stan_ROC_points,
   ggtitle("Predicted ROC for delayed judgments") +
   theme_bw(base_size = 16) +
   theme(legend.position = c(.75, .1),
-        legend.box = "horizontal"
+        legend.box = "horizontal",
+        legend.key.height = unit(1.5, "lines")
         )
 print(ROC)
 
