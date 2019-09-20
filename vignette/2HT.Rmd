@@ -481,7 +481,7 @@ twoHT_std_avg_ROC_points <- select(twoHT_std_params, -subject) %>%
 ```
 
 
-```{r std_twoHT_ROC_avg_plot, fig.width=9, dependson="std_2HT_fit"}
+```{r std_twoHT_ROC_avg_plot, fig.width=8, fig.height=8, dependson="std_2HT_fit"}
 ggplot(twoHT_std_avg_ROC_points,
        aes(x=FAR, y=HR, color=strength, shape=pOld)
               ) +
@@ -509,7 +509,7 @@ ggplot(twoHT_std_avg_ROC_points,
                           ) +
   coord_fixed() +
   ggtitle("Two-HT Model ROC (Average)") +
-  theme_bw(base_size = 26) +
+  theme_bw(base_size = 16) +
   theme(plot.title = element_text(hjust=.5),
         strip.background = element_blank(),
         legend.key.size = unit(2, "lines")
@@ -517,7 +517,7 @@ ggplot(twoHT_std_avg_ROC_points,
 ```
 
 
-```{r std_twoHT_ROC_sub_plot, fig.width=9, dependson="std_2HT_fit"}
+```{r std_twoHT_ROC_sub_plot, fig.width=10, fig.height=10, dependson="std_2HT_fit"}
 
 ggplot(twoHT_std_sub_ROC_points,
        aes(x=FAR, y=HR, color=strength, shape=pOld)
@@ -580,6 +580,42 @@ left_join(x, y, by = "subject") %>%
   column_spec(1, bold = TRUE)
 
 rm(x,y)
+```
+
+
+
+```{r save_MLE_outputs, cache=FALSE, eval=isTRUE(getOption('knitr.in.progress'))}
+files_dir <- paste0(tools::file_path_sans_ext(knitr::current_input()),
+                    "_files"
+                    )
+if (!dir.exists(files_dir)) {
+  dir.create(files_dir)
+}
+
+write.csv(twoHT_std_params,
+          file = file.path(files_dir, "parameters.csv"),
+          row.names = FALSE
+          )
+write.csv(twoHT_std_GOF,
+          file = file.path(files_dir, "GOF.csv"),
+          row.names = FALSE
+          )
+```
+
+
+```{r MLE_download_links, cache=FALSE, results="asis"}
+cat("<ul><li>",
+    paste0('<a href="', file.path(files_dir, "parameters.csv"),
+           '">Download Parameters</a>'
+           ),
+    "</li><li>",
+    paste0('<a href="',
+           file.path(files_dir, "GOF.csv"),
+           '">Download GOF Statistics</a>'
+       ),
+    "</li></ul>",
+    sep=""
+    )
 ```
 
 
@@ -708,6 +744,7 @@ ggplot(full_join(x, y, by = c("subject", "param")),
        ) +
   geom_point() +
   geom_abline(intercept = 0, slope=1) +
-  facet_wrap(~param, scales = "free")
+  facet_wrap(~param, scales = "free") +
+  ggtitle("MPT vs. Std. Parameters")
 ```
 
