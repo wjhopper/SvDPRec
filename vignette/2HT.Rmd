@@ -142,6 +142,7 @@ twoHT_stan_subject_param_summaries <- mean_hdi(twoHT_stan_subject_params)
 twoHT_stan_pop_params <- spread_draws(twoHT_stan_fit, `beta_.*`[parameter_index], regex=TRUE)
 
 param_index_key <- c("DN", "DO_W", "DO_S", "GO_Lib", "GO_Neut", "GO_Cons")
+
 twoHT_stan_pop_param_summaries <- mean_hdi(twoHT_stan_pop_params) %>%
   select(-.point, -.interval, -.width) %>%
   mutate(parameter_index = param_index_key[parameter_index]) %>%
@@ -153,7 +154,23 @@ twoHT_stan_pop_param_summaries <- mean_hdi(twoHT_stan_pop_params) %>%
 rm(param_index_key)
 ```
 
-```{r stan_ROC_point_predictions, dependson="stan_model"}
+```{r stan_ROC_predictions, dependson="stan_model"}
+
+FAR_points <- seq(0, 1, .01)
+
+twoHT_stan_ROC_curve <- group_by(twoHT_stan_subject_param_summaries, subject) %>%
+  summarise(twoHT = list(
+    data.frame(FAR = rep(FAR_points, 2),
+               strength = factor(rep(c("W", "S"), each = length(FAR_points)),
+                                 levels = c("W", "S")),
+               HR = c( ((1-DO_W)/(1-DN)*FAR_points) + DO_W,
+                       ((1-DO_S)/(1-DN)*FAR_points) + DO_S
+               ))
+    
+    )) %>%
+  select(subject, twoHT) %>%
+  unnest()
+
 detect_params <- select(twoHT_stan_subject_param_summaries, subject, DN, DO_W, DO_S) %>%
   gather("strength","detect_prob", -subject) %>%
   mutate(strength = recode(strength, DN = "L", DO_W = "W", DO_S = "S"))
@@ -162,14 +179,12 @@ bias_params <- select(twoHT_stan_subject_param_summaries, subject, GO_Lib, GO_Ne
   gather("pOld","guess_old_prob", -subject) %>%
   mutate(pOld = recode(pOld, GO_Lib = "75%", GO_Neut = "50%", GO_Cons = "25%"))
 
-twoHT_stan_pred_accuracy <- full_join(detect_params, bias_params, by="subject") %>%
+twoHT_stan_ROC_points <- full_join(detect_params, bias_params, by="subject") %>%
   select(subject, strength, pOld, detect_prob, guess_old_prob) %>%
   arrange(subject,strength, pOld) %>%
   mutate(guess_correct_prob = ifelse(strength=="L", 1-guess_old_prob, guess_old_prob),
          pCorrect = detect_prob + (1-detect_prob)*(guess_correct_prob)) %>%
-  select(-guess_old_prob)
-
-twoHT_stan_ROC_data <- select(twoHT_stan_pred_accuracy, -detect_prob, -guess_correct_prob) %>%
+  select(subject, strength, pOld, pCorrect) %>%
   spread(strength, pCorrect) %>%
   mutate(FAR = 1-L) %>%
   select(subject, pOld, FAR, HR_W = W, HR_S = S) %>%
@@ -197,10 +212,15 @@ formatted_names_map <- c(subject="Subject", model="model", DN="DN<sub>L</sub>", 
 
 ```{r ROC_plot, results="asis", dependson="stan_model", fig.width=10, fig.height=10}
 
-ROC <- ggplot(twoHT_stan_ROC_data,
-              aes(x=FAR, y=HR, linetype=type, shape=pOld, color=strength)) +
-  geom_point(size=2) +
-  geom_line(aes(group=interaction(type, strength)), size=.8) +
+ROC <- ggplot(twoHT_stan_ROC_points,
+              aes(x=FAR, y=HR, color=strength)) +
+  geom_point(aes(shape=pOld), size=2) +
+  geom_line(aes(linetype=type)) +
+  geom_line(aes(x=FAR, y=HR, group=strength, color=strength),
+            data = twoHT_stan_ROC_curve,
+            size=.8,
+            inherit.aes = FALSE
+            ) +
   facet_wrap(~subject, ncol=4, labeller = label_both) +
   scale_x_continuous("False Alarm Rate",
                      limits = c(0,1),
@@ -486,7 +506,6 @@ rm(twoHT_std_fits)
 ```
 
 ```{r std_twoHT_predictions, dependson="std_2HT_fit"}
-FAR_points <- seq(0, 1, .01)
 
 twoHT_std_sub_ROC_preds <- group_by(twoHT_std_params, subject) %>%
   mutate(twoHT = list(
