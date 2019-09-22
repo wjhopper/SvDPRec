@@ -688,7 +688,7 @@ ggplot(twoHT_ROC_points_avg,
             size=1.75
             ) +
   geom_line(aes(x=FAR, y=HR, color=strength, linetype=model),
-            data = mutate(twoHT_ROC_curve_avg, type="pred"),
+            data = twoHT_ROC_curve_avg,
             size=1.75,
             inherit.aes = FALSE
             ) +
@@ -915,3 +915,29 @@ quantile_plot <-
                           )
 }
 ```
+
+## Parameter Comparison
+```{r yoked_vs_unyoked, fig.width=9, fig.height=12}
+x <- twoHT_plus_DR_params_subject %>%
+  mutate(mu.dn = coalesce(mu.dn, mu.do)) %>%
+  gather(key="param", value="value", -subject, -model) %>%
+  spread(key=model, value=value)
+
+y <- gather(select(twoHT_plus_DR_GOF_subject, subject, model, G2),
+            key = "param", value="value", -subject, -model
+            ) %>%
+  spread(key=model, value=value)
+
+ggplot(bind_rows(x, y),
+       aes(x=yoked, y=unyoked)
+       ) +
+  geom_point() +
+  geom_abline(intercept = 0, slope=1) +
+  facet_wrap(~param, scales = "free", ncol=3) +
+  xlab("Two Mu's") +
+  ylab("Three Mu's") +
+  ggtitle("Three vs. Two Mu Models")
+
+rm(x, y)
+```
+
