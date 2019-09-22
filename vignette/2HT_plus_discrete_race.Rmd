@@ -134,6 +134,20 @@ deRT <- function(x, mu, sigma, nu, weights) {
   }
 ```
 
+
+```{r twoHT}
+twoHT <- function(detect, guess) {
+  
+  FAR <- (1-detect['dNew.L'])*guess
+  HR_W <- detect['dOld.W'] + (1-detect['dOld.W'])*guess 
+  HR_S <- detect['dOld.S'] + (1-detect['dOld.S'])*guess
+
+  return(list(FAR=FAR, HR_W=HR_W, HR_S=HR_S))
+}
+
+```
+
+
 ```{r objective_functions}
 
 DR_predictions <- function(parameters, data) {
@@ -522,9 +536,26 @@ quantiles <- mutate(quantiles, strength = factor(strength, levels = c("L","W","S
 
 
 ```{r ROC_predictions, dependson="parameters"}
+
+
+obs_ROC_by_sub <- mutate(delayed_counts_by_sub_bias,
+         FAR = FA / L_N,
+         HR_W = H_W / W_N,
+         HR_S = H_S / S_N
+         ) %>%
+  select(subject, pOld, FAR, HR_W, HR_S) %>%
+  gather(key = "strength", value = "HR", HR_W, HR_S) %>%
+  arrange(subject, desc(strength)) %>%
+  mutate(strength = sub("HR_", "", strength, fixed=TRUE))
+
+
+obs_ROC_avg <- group_by(obs_ROC_by_sub, pOld, strength) %>%
+  summarise_at(.vars = c("HR", "FAR"), .funs = "mean")
+
+
 FAR_points <- seq(0, 1, .01)
 
-twoHT_ROC_subject <- twoHT_plus_DR_params_subject %>%
+twoHT_ROC_curve_subject <- twoHT_plus_DR_params_subject %>%
   select(subject, model, dNew.L, dOld.W, dOld.S) %>%
   rowwise() %>%
   mutate(twoHT = list(
@@ -540,7 +571,7 @@ twoHT_ROC_subject <- twoHT_plus_DR_params_subject %>%
   filter(HR <= 1)
 
 
-twoHT_ROC_avg <- twoHT_plus_DR_params_avg %>%
+twoHT_ROC_curve_avg <- twoHT_plus_DR_params_avg %>%
   select(model, dNew.L, dOld.W, dOld.S) %>%
   rowwise() %>%
   mutate(twoHT = list(
@@ -556,18 +587,48 @@ twoHT_ROC_avg <- twoHT_plus_DR_params_avg %>%
   filter(HR <= 1)
 
 
-obs_ROC_by_sub <- mutate(delayed_counts_by_sub_bias,
-         FAR = FA / L_N,
-         HR_W = H_W / W_N,
-         HR_S = H_S / S_N
-         ) %>%
-  select(subject, pOld, FAR, HR_W, HR_S) %>%
-  gather(key = "strength", value = "HR", HR_W, HR_S) %>%
-  arrange(subject, desc(strength)) %>%
-  mutate(strength = sub("HR_", "", strength, fixed=TRUE))
+twoHT_ROC_points_subject <- twoHT_plus_DR_params_subject %>%
+  rowwise() %>%
+  mutate(x = list(data.frame(
+           twoHT(detect = c("dNew.L"=dNew.L, "dOld.W"=dOld.W, "dOld.S"=dOld.S),
+                 guess = c("gC"=gC, "gN"=gN, "gL"=gL)
+                 ),
+           pOld = c(.25, .5, .75)
+         ))) %>%
+  select(subject, model, x) %>%
+  unnest() %>%
+  gather(key="strength", value="HR", HR_W, HR_S) %>%
+  mutate(strength = sub("HR_", "", strength)) %>%
+  filter(HR <= 1) %>%
+  select(subject, model, pOld, strength, FAR, HR) %>%
+  bind_rows(pred = ., 
+            mutate(obs_ROC_by_sub, model="obs")
+            )
 
-obs_ROC_avg <- group_by(obs_ROC_by_sub, pOld, strength) %>%
-  summarise_at(.vars = c("HR", "FAR"), .funs = "mean")
+
+twoHT_ROC_points_avg <- twoHT_plus_DR_params_subject %>%
+  select(model, dNew.L, dOld.W, dOld.S, gC, gN, gL) %>%
+  group_by(model) %>%
+  summarise_all("mean") %>%
+  ungroup() %>%
+  rowwise() %>%
+  mutate(x = list(data.frame(
+           twoHT(detect = c("dNew.L"=dNew.L, "dOld.W"=dOld.W, "dOld.S"=dOld.S),
+                 guess = c("gC"=gC, "gN"=gN, "gL"=gL)
+                 ),
+           pOld = c(.25, .5, .75),
+           stringsAsFactors = FALSE
+         ))) %>%
+  select(model, x) %>%
+  unnest() %>%
+  gather(key="strength", value="HR", HR_W, HR_S) %>%
+  mutate(strength = sub("HR_", "", strength)) %>%
+  filter(HR <= 1) %>%
+  select(model, pOld, strength, FAR, HR) %>%
+  bind_rows(pred = ., 
+            mutate(obs_ROC_avg, model="obs")
+            )
+
 ```
 
 
@@ -616,29 +677,37 @@ twoHT_plus_DR_GOF_sum <- group_by(twoHT_plus_DR_GOF_subject, model) %>%
 ```
 
 
+## Average Predictions
+
 ```{r ROC_avg_plot, fig.width=7, fig.height=7, dependson="ROC_predictions"}
-ggplot(twoHT_ROC_avg,
-       aes(x=FAR, y=HR, color=strength)) +
-  geom_line(aes(linetype=model),
-            size=.8
+ggplot(twoHT_ROC_points_avg,
+       aes(x=FAR, y=HR, color=strength, shape = factor(pOld))) +
+  geom_point(size=4) +
+  geom_line(aes(linetype=model, group=interaction(strength, model)),
+            data = filter(twoHT_ROC_points_avg, model=="obs"),
+            size=1.75
             ) +
-  geom_point(aes(shape = factor(pOld)),
-             data=obs_ROC_avg
-             ) +
+  geom_line(aes(x=FAR, y=HR, color=strength, linetype=model),
+            data = mutate(twoHT_ROC_curve_avg, type="pred"),
+            size=1.75,
+            inherit.aes = FALSE
+            ) +
   scale_x_continuous("False Alarm Rate",
                      limits = c(0,1),
                      labels = c(0,0.25, 0.5, 0.75, 1)
                      ) +
   scale_y_continuous("Hit Rate", limits = c(0,1)) +
   scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
-  scale_shape_discrete("pOld") +
-  scale_linetype_discrete(limits = c("unyoked", "yoked"),
+  scale_shape_discrete("p(Old)",
+                       limits = c(.25, .5, .75),
+                       labels = c("25%", "50%", "75%")
+                       ) +
+  scale_linetype_discrete("Model",
+                          limits = c("obs", "unyoked", "yoked"),
                           labels = c("yoked" = "Two Mu's",
-                                     "unyoked" = "Three Mu's"
-                                     )
+                                     "unyoked" = "Three Mu's",
+                                     "obs" = "Observed")
                           ) +
-  guides(colour = guide_legend(override.aes = list(size = 4)),
-         shape = guide_legend(override.aes = list(size = 4))) +
   coord_fixed() +
   ggtitle("Predicted ROC for delayed judgments") +
   theme_bw(base_size = 16) +
@@ -649,6 +718,7 @@ ggplot(twoHT_ROC_avg,
 
 
 ```{r QP_plot, fig.width=10, fig.height=7, dependson=c("speeded_quantiles","speeded_accuracy")}
+
 ggplot(conditional_quantiles_avg,
        aes(x=RT, y=p, color=speeded_correct, linetype=type, shape=type)) +
   geom_point(size=2) +
@@ -712,16 +782,20 @@ left_join(twoHT_plus_DR_params_subject,
 ```
 
 
+## Subject Predictions
 
 ```{r ROC_subject_plot, dependson="ROC_predictions", fig.height=12, fig.width=9}
-ggplot(twoHT_ROC_subject,
-       aes(x=FAR, y=HR, color=strength)) +
-  geom_line(aes(linetype=model),
-            size=.8
+
+ggplot(twoHT_ROC_points_subject,
+       aes(x=FAR, y=HR, color=strength, shape = factor(pOld))) +
+  geom_point() +
+  geom_line(aes(linetype=model, group=interaction(strength, model)),
+            data = filter(twoHT_ROC_points_subject, model=="obs"),
+            size=1) +
+  geom_line(aes(x=FAR, y=HR, color=strength, linetype=model),
+            data = mutate(twoHT_ROC_curve_subject, type="pred"),
+            inherit.aes = FALSE
             ) +
-  geom_point(aes(shape = factor(pOld)),
-             data=obs_ROC_by_sub
-             ) +
   facet_wrap(~ subject,
              labeller = labeller(subject = label_both,
                                  .multi_line = FALSE),
@@ -733,15 +807,18 @@ ggplot(twoHT_ROC_subject,
                      ) +
   scale_y_continuous("Hit Rate", limits = c(0,1)) +
   scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
-  scale_shape_discrete("pOld") +
-  scale_linetype_discrete(limits = c("unyoked", "yoked"),
+  scale_shape_discrete("p(Old)",
+                       limits = c(.25, .5, .75),
+                       labels = c("25%", "50%", "75%")
+                       ) +
+  scale_linetype_discrete("Model",
+                          limits = c("obs", "unyoked", "yoked"),
                           labels = c("yoked" = "Two Mu's",
-                                     "unyoked" = "Three Mu's"
-                                     )
+                                     "unyoked" = "Three Mu's",
+                                     "obs" = "Observed")
                           ) +
-  guides(colour = guide_legend(override.aes = list(size = 4)),
-         shape = guide_legend(override.aes = list(size = 4))) +
   coord_fixed() +
+  guides(shape = guide_legend(override.aes = list(size=3))) +
   ggtitle("Predicted ROC for delayed judgments") +
   theme_bw(base_size = 16) +
   theme(legend.position = c(.75, .1),

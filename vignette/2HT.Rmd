@@ -746,5 +746,7 @@ ggplot(full_join(x, y, by = c("subject", "param")),
   geom_abline(intercept = 0, slope=1) +
   facet_wrap(~param, scales = "free") +
   ggtitle("MPT vs. Std. Parameters")
+
+rm(x, y)
 ```
 
