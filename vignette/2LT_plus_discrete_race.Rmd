@@ -672,7 +672,7 @@ twoLT_plus_DR_GOF_sum <- group_by(twoLT_plus_DR_GOF_subject, model) %>%
   summarise_at(.vars=c("LL",  "G2", "df"), "sum")
 ```
 
-```{r twoLT_predictions, dependson="parameters"}
+```{r ROC_predictions, dependson="parameters"}
 
 twoLT_one <- function(DO, FD, b) {
   RO_params <- calculate_RO_parameters(c("b"=b))
@@ -682,9 +682,9 @@ twoLT_one <- function(DO, FD, b) {
   return(p)
 }
 
-twoLT_point_predictions <-
+twoLT_ROC_points_subject <-
   select(.data = twoLT_plus_DR_params_scaled_subject,
-         subject, model, DO_L, FD_L, DN_L, DO_W, FD_W, DN_W, DO_S, FD_S, DN_S, b_C, b_N, b_L,
+         subject, model, DO_L, FD_L, DN_L, DO_W, FD_W, DN_W, DO_S, FD_S, DN_S,
          RO_DO.C, RO_FD.C, RO_DN.C, RO_DO.N, RO_FD.N, RO_DN.N, RO_DO.L, RO_FD.L, RO_DN.L
          ) %>%
   gather(key="parameter", value="value", -subject, -model) %>%
@@ -692,29 +692,55 @@ twoLT_point_predictions <-
   group_by(subject, model) %>%
   summarise(x = list(as.data.frame(
       c(pOld = list(c("25%", "50%", "75%")),
-        b = list(setNames(value, parameter)[c("b_C", "b_N", "b_L")]),
         twoLT(setNames(value, parameter))
         ),
       stringsAsFactors=FALSE
-    ))) %>% 
+    ))) %>%
+  ungroup() %>%
   unnest() %>%
   rename(S=HR_S, W=HR_W) %>%
   gather(key = "strength", value="HR", S, W) %>%
-  ungroup()
-
-ROC_point_predictions <- bind_rows(mutate(obs_ROC_data, model="obs"),
-                                   twoLT_point_predictions
-                                   ) %>%
+  bind_rows(.,
+            mutate(obs_ROC_data, model="obs")
+            ) %>%
   select(subject, type=model, strength, pOld, FAR, HR) %>%
-  arrange(subject, type, strength, pOld, type)
+  arrange(subject, strength, type, pOld)
 
-ROC_point_predictions_avg <- 
-  group_by(.data = ROC_point_predictions, type, strength, pOld) %>%
-  summarise_at(.vars = c("FAR", "HR"), .funs = "mean") %>%
-  ungroup()
+twoLT_ROC_points_avg <-
+  select(.data = twoLT_plus_DR_params_scaled_avg,
+         model, DO_L, FD_L, DO_W, FD_W, DO_S, FD_S, b_C, b_N, b_L
+         ) %>%
+  mutate(DN_L = 1 - DO_L - FD_L,
+         DN_W = 1 - DO_W - FD_W,
+         DN_S = 1 - DO_S - FD_S
+         ) %>%
+  rowwise() %>%
+  mutate(x = list(as.data.frame(as.list(
+    calculate_RO_parameters(c("b_C"=b_C, "b_N"=b_N, "b_L"=b_L))
+    )))) %>%
+  ungroup() %>%
+  unnest() %>%
+  select(-b_C, -b_N, -b_L) %>%
+  gather(key="parameter", value="value", -model) %>%
+  group_by(model) %>%
+  summarise(x = list(as.data.frame(
+      c(pOld = list(c("25%", "50%", "75%")),
+        twoLT(setNames(value, parameter))
+        ),
+      stringsAsFactors=FALSE
+    ))) %>%
+  ungroup() %>%
+  unnest() %>%
+  rename(S=HR_S, W=HR_W) %>%
+  gather(key = "strength", value="HR", S, W) %>%
+  bind_rows(.,
+            mutate(obs_avg_ROC_data, model="obs")
+            ) %>%
+  select(type=model, strength, pOld, FAR, HR) %>%
+  arrange(strength, type, pOld)
 
 
-twoLT_ROC_curve <-
+twoLT_ROC_curve_subject <-
   select(.data = twoLT_plus_DR_params_scaled_subject,
          subject, model, DO_L, FD_L, DN_L, DO_W, FD_W, DN_W, DO_S, FD_S, DN_S
          ) %>%
@@ -733,46 +759,34 @@ twoLT_ROC_curve <-
   gather(key = "strength", value="HR", S, W) %>%
   rename(type=model) %>%
   arrange(subject, type, desc(b))
-
-## Sanity check
-# full_join(rename(twoLT_point_predictions, type=model),
-#           twoLT_ROC_curve,
-#           by =c("subject", "type", "strength")
-#           ) %>%
-#   mutate(diff <- abs(b.x - b.y)) %>%
-#   group_by(subject, type, pOld) %>%
-#   filter(diff == min(diff))
   
 
-twoLT_ROC_curve_avg <- group_by(.data = twoLT_ROC_curve, type, strength, b) %>%
-  summarise_at(.vars = c("FAR", "HR"), .funs = "mean") %>%
-  ungroup()
+twoLT_ROC_curve_avg <-
+  select(.data = twoLT_plus_DR_params_scaled_avg,
+         model, DO_L, FD_L, DO_W, FD_W, DO_S, FD_S, b_C, b_N, b_L
+         ) %>%
+  mutate(DN_L = 1 - DO_L - FD_L,
+         DN_W = 1 - DO_W - FD_W,
+         DN_S = 1 - DO_S - FD_S
+         ) %>%
+  rowwise() %>%
+  mutate(b = list(seq(-1, 2, .01))) %>%
+  ungroup() %>%
+  unnest(b) %>%
+  group_by(model, b) %>%
+  summarise(x = list(data.frame(
+      FAR = twoLT_one(DO_L, FD_L, b),
+      HR_W = twoLT_one(DO_W, FD_W, b),
+      HR_S = twoLT_one(DO_S, FD_S, b)
+      ))
+    ) %>%
+  ungroup() %>%
+  unnest(x) %>%
+  rename(S=HR_S, W=HR_W) %>%
+  gather(key = "strength", value="HR", S, W) %>%
+  rename(type=model) %>%
+  arrange(type, strength, desc(b))
 
-# twoLT_ROC_curve_avg <-
-#   select(.data = twoLT_plus_DR_params_scaled_avg,
-#          model, DO_L, FD_L, DO_W, FD_W, DO_S, FD_S
-#          ) %>%
-#   mutate(DN_L = 1 - DO_L - FD_L,
-#          DN_W = 1 - DO_W - FD_W,
-#          DN_S = 1 - DO_S - FD_S,
-#          x = list(bias_points)) %>%
-#   unnest(x) %>%
-#   gather(key="parameter", value="value", -model, -bias_ID) %>%
-#   group_by(model, bias_ID) %>%
-#   summarise(x = list(as.data.frame(
-#       c(pOld = list(c("25%", "50%", "75%")),
-#         twoLT(c(calculate_RO_parameters(setNames(value, parameter)[c("b_C","b_N","b_L")]),
-#                 setNames(value, parameter)
-#                 )
-#               )
-#         ),
-#       stringsAsFactors=FALSE
-#     ))) %>% 
-#   ungroup() %>%
-#   unnest(x) %>%
-#   rename(S=HR_S, W=HR_W) %>%
-#   gather(key = "strength", value="HR", S, W) %>%
-#   rename(type=model)
 ```
 
 
@@ -885,14 +899,14 @@ write.csv(twoLT_plus_DR_GOF_subject,
 ```
 
 
-```{r avg_ROC_plot, fig.width=7, fig.height=7, dependson="twoLT_predictions"}
+```{r avg_ROC_plot, fig.width=7, fig.height=7, dependson="ROC_predictions"}
 
-ggplot(ROC_point_predictions_avg,
+ggplot(twoLT_ROC_points_avg,
        aes(x=FAR, y=HR, shape=pOld, color=strength)
        ) +
   geom_point(size=4) +
   geom_line(aes(linetype=type, group=interaction(type, strength)),
-            data = filter(ROC_point_predictions_avg, type=="obs"),
+            data = filter(twoLT_ROC_points_avg, type=="obs"),
             size=1.75
             ) +
   geom_line(aes(x=FAR, y=HR, color=strength, linetype=type),
@@ -1010,16 +1024,16 @@ cat("<ul><li>",
 ## Individual Subjects
 ```{r subject_ROC_plots, fig.width=12, fig.height=12, dependson="2LT_predictions"}
 
-ggplot(ROC_point_predictions,
+ggplot(twoLT_ROC_points_subject,
        mapping=aes(x=FAR, y=HR, color=strength, shape = pOld)) +
   geom_point() +
   geom_line(aes(linetype=type, group=interaction(strength, type)),
-            data = filter(ROC_point_predictions, type=="obs"),
+            data = filter(twoLT_ROC_points_subject, type=="obs"),
             size=1) +
   geom_line(aes(x=FAR, y=HR, color=strength, linetype=type),
-            data = twoLT_ROC_curve,
-            inherit.aes = FALSE
-            ) +
+            data = twoLT_ROC_curve_subject,
+            inherit.aes = FALSE,
+            size=1) +
   facet_wrap(~ subject,
              labeller = labeller(subject = label_both,
                                  .multi_line = FALSE),
@@ -1041,7 +1055,7 @@ ggplot(ROC_point_predictions,
                                      "obs" = "Observed")
                           ) +
   coord_fixed() +
-  # guides(shape = guide_legend(override.aes = list(size=3))) +
+  guides(shape = guide_legend(override.aes = list(size=3))) +
   ggtitle("Predicted ROC for delayed judgments") +
   theme_bw(base_size = 16) +
   theme(legend.position = c(.75, .1),
@@ -1050,7 +1064,7 @@ ggplot(ROC_point_predictions,
 ```
 
 
-```{r subject_RT_plots, class.output="subject_speeded_RT", fig.width=10, fig.align="center", results="asis", dependson=c("parameters","GOF", "twoLT_predictions", "speeded_accuracy", "speeded_quantiles"),}
+```{r subject_RT_plots, class.output="subject_speeded_RT", fig.width=10, fig.align="center", results="asis", dependson=c("parameters","GOF", "ROC_predictions", "speeded_accuracy", "speeded_quantiles"),}
 
 for (s in unique(speeded_RT_choice_quantiles$subject)) {
   
