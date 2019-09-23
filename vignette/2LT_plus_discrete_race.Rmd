@@ -673,15 +673,26 @@ twoLT_plus_DR_GOF_sum <- group_by(twoLT_plus_DR_GOF_subject, model) %>%
 ```
 
 ```{r twoLT_predictions, dependson="parameters"}
+
+twoLT_one <- function(DO, FD, b) {
+  RO_params <- calculate_RO_parameters(c("b"=b))
+  DN <- 1-DO-FD
+  
+  p <- sum(c(DN, FD, DO)*unname(RO_params[c("RO_DN.b", "RO_FD.b", "RO_DO.b")]))
+  return(p)
+}
+
 twoLT_point_predictions <-
   select(.data = twoLT_plus_DR_params_scaled_subject,
-         subject, model, DO_L, FD_L, DN_L, DO_W, FD_W, DN_W, DO_S, FD_S, DN_S,
-         ends_with(".C"), ends_with(".N"), ends_with(".L")) %>%
+         subject, model, DO_L, FD_L, DN_L, DO_W, FD_W, DN_W, DO_S, FD_S, DN_S, b_C, b_N, b_L,
+         RO_DO.C, RO_FD.C, RO_DN.C, RO_DO.N, RO_FD.N, RO_DN.N, RO_DO.L, RO_FD.L, RO_DN.L
+         ) %>%
   gather(key="parameter", value="value", -subject, -model) %>%
-  arrange(subject) %>%
+  arrange(subject, model) %>%
   group_by(subject, model) %>%
   summarise(x = list(as.data.frame(
       c(pOld = list(c("25%", "50%", "75%")),
+        b = list(setNames(value, parameter)[c("b_C", "b_N", "b_L")]),
         twoLT(setNames(value, parameter))
         ),
       stringsAsFactors=FALSE
@@ -701,7 +712,68 @@ ROC_point_predictions_avg <-
   group_by(.data = ROC_point_predictions, type, strength, pOld) %>%
   summarise_at(.vars = c("FAR", "HR"), .funs = "mean") %>%
   ungroup()
+
+
+twoLT_ROC_curve <-
+  select(.data = twoLT_plus_DR_params_scaled_subject,
+         subject, model, DO_L, FD_L, DN_L, DO_W, FD_W, DN_W, DO_S, FD_S, DN_S
+         ) %>%
+  mutate(b = list(seq(-1, 2, .01))) %>%
+  unnest(b) %>%
+  group_by(subject, model, b)  %>%
+  summarise(x = list(data.frame(
+      FAR = twoLT_one(DO_L, FD_L, b),
+      HR_W = twoLT_one(DO_W, FD_W, b),
+      HR_S = twoLT_one(DO_S, FD_S, b)
+      ))
+    ) %>%
+  ungroup() %>%
+  unnest(x) %>%
+  rename(S=HR_S, W=HR_W) %>%
+  gather(key = "strength", value="HR", S, W) %>%
+  rename(type=model)
+
+## Sanity check
+# full_join(rename(twoLT_point_predictions, type=model),
+#           twoLT_ROC_curve,
+#           by =c("subject", "type", "strength")
+#           ) %>%
+#   mutate(diff <- abs(b.x - b.y)) %>%
+#   group_by(subject, type, pOld) %>%
+#   filter(diff == min(diff))
+  
+
+twoLT_ROC_curve_avg <- group_by(.data = twoLT_ROC_curve, type, strength, b) %>%
+  summarise_at(.vars = c("FAR", "HR"), .funs = "mean") %>%
+  ungroup()
+
+# twoLT_ROC_curve_avg <-
+#   select(.data = twoLT_plus_DR_params_scaled_avg,
+#          model, DO_L, FD_L, DO_W, FD_W, DO_S, FD_S
+#          ) %>%
+#   mutate(DN_L = 1 - DO_L - FD_L,
+#          DN_W = 1 - DO_W - FD_W,
+#          DN_S = 1 - DO_S - FD_S,
+#          x = list(bias_points)) %>%
+#   unnest(x) %>%
+#   gather(key="parameter", value="value", -model, -bias_ID) %>%
+#   group_by(model, bias_ID) %>%
+#   summarise(x = list(as.data.frame(
+#       c(pOld = list(c("25%", "50%", "75%")),
+#         twoLT(c(calculate_RO_parameters(setNames(value, parameter)[c("b_C","b_N","b_L")]),
+#                 setNames(value, parameter)
+#                 )
+#               )
+#         ),
+#       stringsAsFactors=FALSE
+#     ))) %>% 
+#   ungroup() %>%
+#   unnest(x) %>%
+#   rename(S=HR_S, W=HR_W) %>%
+#   gather(key = "strength", value="HR", S, W) %>%
+#   rename(type=model)
 ```
+
 
 ```{r speeded_accuracy, dependson="RT_parameters_condition_wise"}
 
@@ -731,6 +803,7 @@ accuracy <- bind_rows(rename(predicted_acc, acc = predicted_acc),
   rename(type = model) %>%
   mutate(strength = factor(strength, levels = c("L","W","S")))
 ```
+
 
 ```{r speeded_quantiles, dependson="RT_parameters_condition_wise"}
 predicted_quantiles <-
@@ -810,34 +883,43 @@ write.csv(twoLT_plus_DR_GOF_subject,
           )
 ```
 
+
 ```{r avg_ROC_plot, fig.width=7, fig.height=7, dependson="twoLT_predictions"}
+
 ggplot(ROC_point_predictions_avg,
-       aes(x=FAR, y=HR,  shape=type, linetype=strength,
-           group=interaction(type, strength))
+       aes(x=FAR, y=HR, shape=pOld, color=strength)
        ) +
-  geom_line(size=1) +
-  geom_point(aes(color=pOld), size=2, stroke=1.3) +
-  scale_x_continuous("False Alarm Rate", limits = c(0,1),
-                     labels = c(0,0.25, 0.5, 0.75, 1)) +
-  scale_y_continuous("Hit Rate", limits = c(0,1)) +
-  scale_linetype_discrete("Strength",
-                          labels=c("W" = "Weak",
-                                   "S" = "Strong")) +
-  scale_color_manual("p(Old)", values = c("#d82d2d", "#d8d834", "#17b50c")) +
-  scale_shape_manual("Type",
-                     values=c(16, 15, 4),
-                     breaks = c("obs", "yoked", "unyoked"),
-                     labels = c("Observed", "Two Mu's", "Three Mu's")
+  geom_point(size=4) +
+  geom_line(aes(linetype=type, group=interaction(type, strength)),
+            data = filter(ROC_point_predictions_avg, type=="obs"),
+            size=1.75
+            ) +
+  geom_line(aes(x=FAR, y=HR, color=strength, linetype=type),
+            data = twoLT_ROC_curve_avg,
+            size=1.75,
+            inherit.aes = FALSE
+            ) +
+  scale_x_continuous("False Alarm Rate",
+                     limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)
                      ) +
-  guides(colour = guide_legend(override.aes = list(size = 4)),
-         shape = guide_legend(override.aes = list(size = 4))) +
-  ggtitle("Two LT Model ROC") +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
+  scale_shape_discrete("p(Old)",
+                       limits = c("25%", "50%", "75%")
+                       ) +
+  scale_linetype_discrete("Model",
+                          limits = c("obs", "unyoked", "yoked"),
+                          labels = c("yoked" = "Two Mu's",
+                                     "unyoked" = "Three Mu's",
+                                     "obs" = "Observed")
+                          ) +
+  coord_fixed() +
+  ggtitle("Predicted ROC for delayed judgments") +
   theme_bw(base_size = 16) +
-  theme(plot.title = element_text(hjust=.5),
-        strip.background = element_blank(),
-        legend.key.width = unit(10,"mm"),
-        legend.position = c(.6, .15),
-        legend.box = "horizontal")
+  theme(legend.position = c(.65, .2),
+        legend.box = "horizontal"
+        )
 ```
 
 
@@ -925,35 +1007,45 @@ cat("<ul><li>",
 
 
 ## Individual Subjects
-```{r subject_ROC_plots, fig.width=10, fig.height=10, dependson="2LT_predictions"}
+```{r subject_ROC_plots, fig.width=12, fig.height=12, dependson="2LT_predictions"}
+
 ggplot(ROC_point_predictions,
-       aes(x=FAR, y=HR,  shape=type, linetype=strength,
-           group=interaction(type, strength))
-       ) +
-  geom_line(size=1) +
-  geom_point(aes(color=pOld), size=2, stroke=1.3) +
-  facet_wrap(~subject, labeller = label_both) +
-  scale_x_continuous("False Alarm Rate", limits = c(0,1),
-                     labels = c(0,0.25, 0.5, 0.75, 1)) +
-  scale_y_continuous("Hit Rate", limits = c(0,1)) +
-  scale_linetype_discrete("Strength",
-                          labels=c("W" = "Weak",
-                                   "S" = "Strong")) +
-  scale_color_manual("p(Old)", values = c("#d82d2d", "#d8d834", "#17b50c")) +
-  scale_shape_manual("Type",
-                     values=c(16, 15, 4),
-                     breaks = c("obs", "yoked", "unyoked"),
-                     labels = c("Observed", "Two Mu's", "Three Mu's")
+       mapping=aes(x=FAR, y=HR, color=strength, shape = pOld)) +
+  geom_point() +
+  geom_line(aes(linetype=type, group=interaction(strength, type)),
+            data = filter(ROC_point_predictions, type=="obs"),
+            size=1) +
+  geom_line(aes(x=FAR, y=HR, color=strength, linetype=type),
+            data = twoLT_ROC_curve,
+            inherit.aes = FALSE
+            ) +
+  facet_wrap(~ subject,
+             labeller = labeller(subject = label_both,
+                                 .multi_line = FALSE),
+             ncol=4
+             ) +
+  scale_x_continuous("False Alarm Rate",
+                     limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)
                      ) +
-  guides(colour = guide_legend(override.aes = list(size = 4)),
-         shape = guide_legend(override.aes = list(size = 4))) +
-  ggtitle("Two LT Model ROC") +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
+  scale_shape_discrete("p(Old)",
+                       limits = c("25%", "50%", "75%")
+                       ) +
+  # scale_linetype_discrete("Model",
+  #                         limits = c("obs", "unyoked", "yoked"),
+  #                         labels = c("yoked" = "Two Mu's",
+  #                                    "unyoked" = "Three Mu's",
+  #                                    "obs" = "Observed")
+  #                         ) +
+  coord_fixed() +
+  # guides(shape = guide_legend(override.aes = list(size=3))) +
+  ggtitle("Predicted ROC for delayed judgments") +
   theme_bw(base_size = 16) +
-  theme(plot.title = element_text(hjust=.5),
-        strip.background = element_blank(),
-        legend.key.width = unit(10,"mm"),
-        legend.position = c(.75, .10),
-        legend.box = "horizontal")
+  theme(legend.position = c(.75, .1),
+        legend.box = "horizontal"
+        )
 ```
 
 
