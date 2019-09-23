@@ -731,7 +731,8 @@ twoLT_ROC_curve <-
   unnest(x) %>%
   rename(S=HR_S, W=HR_W) %>%
   gather(key = "strength", value="HR", S, W) %>%
-  rename(type=model)
+  rename(type=model) %>%
+  arrange(subject, type, desc(b))
 
 ## Sanity check
 # full_join(rename(twoLT_point_predictions, type=model),
@@ -1033,12 +1034,12 @@ ggplot(ROC_point_predictions,
   scale_shape_discrete("p(Old)",
                        limits = c("25%", "50%", "75%")
                        ) +
-  # scale_linetype_discrete("Model",
-  #                         limits = c("obs", "unyoked", "yoked"),
-  #                         labels = c("yoked" = "Two Mu's",
-  #                                    "unyoked" = "Three Mu's",
-  #                                    "obs" = "Observed")
-  #                         ) +
+  scale_linetype_discrete("Model",
+                          limits = c("obs", "unyoked", "yoked"),
+                          labels = c("yoked" = "Two Mu's",
+                                     "unyoked" = "Three Mu's",
+                                     "obs" = "Observed")
+                          ) +
   coord_fixed() +
   # guides(shape = guide_legend(override.aes = list(size=3))) +
   ggtitle("Predicted ROC for delayed judgments") +
