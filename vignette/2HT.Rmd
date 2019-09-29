@@ -171,7 +171,8 @@ twoHT_stan_ROC_curve <- group_by(twoHT_stan_subject_param_summaries, subject) %>
     
     )) %>%
   select(subject, twoHT) %>%
-  unnest()
+  unnest() %>%
+  filter(HR <= 1)
 
 detect_params <- select(twoHT_stan_subject_param_summaries, subject, DN, DO_W, DO_S) %>%
   gather("strength","detect_prob", -subject) %>%
@@ -211,21 +212,20 @@ formatted_names_map <- c(subject="Subject", model="model", DN="DN<sub>L</sub>", 
 ```
 
 
-
-```{r ROC_plot, results="asis", dependson="stan_model", fig.width=10, fig.height=10}
+```{r stan_ROC_plot, results="asis", dependson="stan_model", fig.height=12, fig.width=12}
 
 ROC <- ggplot(twoHT_stan_ROC_points,
-              aes(x=FAR, y=HR, color=strength, shape=pOld)
+              aes(x=FAR, y=HR, color=type, shape=pOld)
               ) +
-  geom_point(size=2) +
-  geom_line(aes(linetype=type, group=strength),
-            data = filter(twoHT_stan_ROC_points, type=="obs"),
-            size=1) +
-  geom_line(aes(x=FAR, y=HR, color=strength, linetype=type),
+  geom_line(aes(x=FAR, y=HR, color=type, linetype=strength),
             data = mutate(twoHT_stan_ROC_curve, type="pred"),
             size=1,
             inherit.aes = FALSE
-            ) +
+            ) +  
+  geom_line(aes(linetype=strength, group=strength),
+            data = filter(twoHT_stan_ROC_points, type=="obs"),
+            size=1) +
+  geom_point(size=2) +
   facet_wrap(~subject, ncol=4, labeller = label_both) +
   scale_x_continuous("False Alarm Rate",
                      limits = c(0,1),
@@ -237,12 +237,15 @@ ROC <- ggplot(twoHT_stan_ROC_points,
                      breaks = c(0,0.25, 0.5, 0.75, 1),
                      labels = c("0",".25", ".5", ".75", "1")
                      ) +
-  scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
-  scale_linetype_discrete(NULL,
-                          limits = c("pred", "obs"),
-                          labels = c("obs" = "Observed",
-                                     "pred" = "Bayesian\nTwo HT"
-                                     )
+  scale_colour_brewer("Model",
+                      palette = "Set1",
+                      limits = c("obs", "pred"),
+                      labels = c("obs" = "Observed",
+                                 "pred" = "Bayesian\nTwo HT")
+                      ) +
+  scale_linetype_discrete("Strength",
+                          limits = c("W", "S"),
+                          labels = c("W" = "Weak", "S" = "Strong")
                           ) +
   coord_equal() +
   ggtitle("Predicted ROC for delayed judgments") +
@@ -483,56 +486,61 @@ twoHT_std_avg_ROC_points <- select(twoHT_std_params, -subject) %>%
 ```
 
 
-```{r std_twoHT_ROC_avg_plot, fig.width=8, fig.height=8, dependson="std_2HT_fit"}
+```{r std_twoHT_ROC_avg_plot, fig.width=6.5, fig.height=6.5, dependson="std_2HT_fit"}
 ggplot(twoHT_std_avg_ROC_points,
-       aes(x=FAR, y=HR, color=strength, shape=pOld)
-              ) +
-  geom_point(size=4) +
-  geom_line(aes(linetype=type, group=strength),
-            data = filter(twoHT_std_avg_ROC_points, type=="obs"),
-            size=1.75
-            ) +
-  geom_line(aes(x=FAR, y=HR, color=strength, linetype=type),
+       aes(x=FAR, y=HR, color=type, shape=pOld)
+       ) +
+  geom_line(aes(x=FAR, y=HR, color=type, linetype=strength),
             data = mutate(twoHT_std_avg_ROC_curve, type="pred"),
             size=1.75,
             inherit.aes = FALSE
             ) +
+  geom_line(aes(linetype=strength, group=strength),
+            data = filter(twoHT_std_avg_ROC_points, type=="obs"),
+            size=1.75
+            ) +
+  geom_point(size=4) +
   scale_x_continuous("False Alarm Rate", limits = c(0,1),
                      labels = c(0,0.25, 0.5, 0.75, 1)
                      ) +
   scale_y_continuous("Hit Rate", limits = c(0,1)
                      ) +
-  scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
-  scale_linetype_discrete(NULL,
-                          limits = c("pred", "obs"),
-                          labels = c("obs" = "Observed",
-                                     "pred" = "Bayesian\nTwo HT"
-                                     )
+  scale_colour_brewer("Model",
+                      palette = "Set1",
+                      limits = c("obs", "pred"),
+                      labels = c("obs" = "Observed",
+                                 "pred" = "Two HT")
+                      ) +
+  scale_linetype_discrete("Strength",
+                          limits = c("W", "S"),
+                          labels = c("W" = "Weak", "S" = "Strong")
                           ) +
   coord_fixed() +
   ggtitle("Two-HT Model ROC (Average)") +
   theme_bw(base_size = 16) +
   theme(plot.title = element_text(hjust=.5),
         strip.background = element_blank(),
-        legend.key.size = unit(2, "lines")
+        legend.key.size = unit(2, "lines"),
+        legend.position = c(.6, .2),
+        legend.box = "horizontal"
         )
 ```
 
 
-```{r std_twoHT_ROC_sub_plot, fig.width=10, fig.height=10, dependson="std_2HT_fit"}
+```{r std_twoHT_ROC_sub_plot, fig.width=12, fig.height=12, dependson="std_2HT_fit"}
 
 ggplot(twoHT_std_sub_ROC_points,
-       aes(x=FAR, y=HR, color=strength, shape=pOld)
+       aes(x=FAR, y=HR, color=type, shape=pOld)
        ) +
-  geom_point(size=2) +
-  geom_line(aes(linetype=type, group=strength),
-            data = filter(twoHT_std_sub_ROC_points, type=="obs"),
-            size=1) +
-  geom_line(aes(x=FAR, y=HR, color=strength, linetype=type),
+  geom_line(aes(x=FAR, y=HR, color=type, linetype=strength),
             data = mutate(twoHT_std_sub_ROC_curve, type="pred"),
             size=1,
             inherit.aes = FALSE
             ) +
+  geom_line(aes(linetype=strength, group=strength),
+            data = filter(twoHT_std_sub_ROC_points, type=="obs"),
+            size=1) +
+  geom_point(size=2) +
   facet_wrap(~subject, ncol=4, labeller = label_both) +
   scale_x_continuous("False Alarm Rate",
                      limits = c(0,1),
@@ -544,12 +552,15 @@ ggplot(twoHT_std_sub_ROC_points,
                      breaks = c(0,0.25, 0.5, 0.75, 1),
                      labels = c("0",".25", ".5", ".75", "1")
                      ) +
-  scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
-  scale_linetype_discrete(NULL,
-                          limits = c("pred", "obs"),
-                          labels = c("obs" = "Observed",
-                                     "pred" = "Bayesian\nTwo HT"
-                                     )
+  scale_colour_brewer("Model",
+                      palette = "Set1",
+                      limits = c("obs", "pred"),
+                      labels = c("obs" = "Observed",
+                                 "pred" = "Two HT")
+                      ) +
+  scale_linetype_discrete("Strength",
+                          limits = c("W", "S"),
+                          labels = c("W" = "Weak", "S" = "Strong")
                           ) +
   coord_equal() +
   ggtitle("Predicted ROC for delayed judgments") +
@@ -727,7 +738,7 @@ left_join(twoHT_mpt_params,
 ```
 
 
-# Std vs. MPT Parameter Comparison
+### Std vs. MPT Parameter Comparison
 
 ```{r mpt_vs_std_scatterplot}
 x <- gather(twoHT_std_params, "param", "std", -subject) %>%
@@ -863,31 +874,34 @@ twoHT_std_ROC_points_pooled <-
 ```
 
 
-```{r std_twoHT_ROC_pooled_plot, fig.width=8, fig.height=8, dependson="std_twoHT_ROC_pooled_predictions"}
+```{r std_twoHT_ROC_pooled_plot, fig.width=6.5, fig.height=6.5, dependson="std_twoHT_ROC_pooled_predictions"}
 ggplot(twoHT_std_ROC_points_pooled,
-       aes(x=FAR, y=HR, color=strength, shape=pOld)
+       aes(x=FAR, y=HR, color=type, shape=pOld)
               ) +
-  geom_point(size=4) +
-  geom_line(aes(linetype=type, group=strength),
-            data = filter(twoHT_std_ROC_points_pooled, type=="obs"),
-            size=1.75
-            ) +
-  geom_line(aes(x=FAR, y=HR, color=strength, linetype=type),
+  geom_line(aes(x=FAR, y=HR, color=type, linetype=strength),
             data = mutate(twoHT_std_ROC_curve_pooled, type="pred"),
             size=1.75,
             inherit.aes = FALSE
             ) +
+  geom_line(aes(linetype=strength, group=strength),
+            data = filter(twoHT_std_ROC_points_pooled, type=="obs"),
+            size=1.75
+            ) +
+  geom_point(size=4) +
   scale_x_continuous("False Alarm Rate", limits = c(0,1),
                      labels = c(0,0.25, 0.5, 0.75, 1)
                      ) +
   scale_y_continuous("Hit Rate", limits = c(0,1)
                      ) +
-  scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
-  scale_linetype_discrete("Model",
-                          limits = c("pred", "obs"),
-                          labels = c("obs" = "Observed",
-                                     "pred" = "Two HT"
-                                     )
+  scale_colour_brewer("Model",
+                      palette = "Set1",
+                      limits = c("obs", "pred"),
+                      labels = c("obs" = "Observed",
+                                 "pred" = "Two HT")
+                      ) +
+  scale_linetype_discrete("Strength",
+                          limits = c("W", "S"),
+                          labels = c("W" = "Weak", "S" = "Strong")
                           ) +
   coord_fixed() +
   ggtitle("Two-HT Model ROC (Pooled Data)") +
@@ -895,9 +909,10 @@ ggplot(twoHT_std_ROC_points_pooled,
   theme(plot.title = element_text(hjust=.5),
         strip.background = element_blank(),
         legend.key.size = unit(2, "lines"),
-        legend.position = c(.65, .2),
+        legend.position = c(.6, .2),
         legend.box = "horizontal")
 ```
+
 
 ```{r pooled_param_table, dependson=c("std_twoHT_pooled_params", "std_twoHT_pooled_GOF")}
 kable(twoHT_std_params_pooled,
@@ -920,8 +935,8 @@ kable(twoHT_std_GOF_pooled,
 ```
 
 
-# Pooled vs. Averaged Parameter Comparison
-```{r, pooled_vs_avg_params, dependson=c("std_twoHT_pooled_params", "std_twoHT_GOF")}
+## Pooled vs. Averaged Parameter Comparison
+```{r pooled_vs_avg_params, dependson=c("std_twoHT_pooled_params", "std_twoHT_GOF")}
 x <- gather(twoHT_std_avg_params, "param", "value")
 y <- gather(twoHT_std_params_pooled, "param", "value")
 
