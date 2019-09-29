@@ -39,6 +39,8 @@ load(file.path(root_dir, "data","SvDPRec.Rdata"))
 test <- select(test, -list)
 ```
 
+# By-Subject Modeling
+
 ```{r cell_counts, dependson="load_data"}
 delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
   select(-starts_with("speeded")) %>%
@@ -86,7 +88,7 @@ null_LL <- mutate(delayed_counts_by_sub_bias,
 ```
 
 ## Hierarchical Bayesian Estimation
-### Will's Stan Model
+
 ```{stan stan_model_external, cache=FALSE, eval=FALSE, echo=TRUE, output.var='modelstring', code=readLines(file.path(root_dir, "R","2HT.stan"))}
 ```
 
@@ -204,7 +206,7 @@ formatted_names_map <- c(subject="Subject", model="model", DN="DN<sub>L</sub>", 
                          GO_Lib="GO<sub>L</sub>", G2="G<sup>2</sup>", LL="LL",
                          null_LL="Null LL", df="df", p="p(X<sup>2</sup>)",fevals="fevals",
                          gevals="gevals", niter="niter", convcode="convcode", mean="Mean",
-                         HDI="HDI"
+                         HDI="HDI", p.value = "<i>p</i>"
                          )
 ```
 
@@ -725,6 +727,8 @@ left_join(twoHT_mpt_params,
 ```
 
 
+# Std vs. MPT Parameter Comparison
+
 ```{r mpt_vs_std_scatterplot}
 x <- gather(twoHT_std_params, "param", "std", -subject) %>%
   bind_rows(.,
@@ -746,6 +750,190 @@ ggplot(full_join(x, y, by = c("subject", "param")),
   geom_abline(intercept = 0, slope=1) +
   facet_wrap(~param, scales = "free") +
   ggtitle("MPT vs. Std. Parameters")
+
+rm(x, y)
+```
+
+# Aggregated Modeling
+
+```{r cell_counts_pooled}
+delayed_counts_by_bias <-
+  select(.data = delayed_counts_by_sub_bias, -subject) %>%
+  group_by(pOld) %>%
+  summarise_all(.funs = "sum")
+
+obs_ROC_data_pooled <-
+  mutate(delayed_counts_by_bias,
+         FAR = FA / L_N,
+         HR_W = H_W / W_N,
+         HR_S = H_S / S_N,
+         pOld = sprintf("%2.0f%%", pOld * 100)) %>%
+  select(pOld, FAR, HR_W, HR_S) %>%
+  gather(key="strength", value="HR", HR_W, HR_S) %>%
+  mutate(strength = sub("HR_", "", strength)) %>%
+  select(pOld, strength, FAR, HR)
+```
+
+
+```{r null_LL_pooled}
+null_LL_pooled <-
+  mutate(delayed_counts_by_bias,
+         FA_LL = dbinom(FA, L_N, FA / L_N, log = TRUE),
+         HW_LL = dbinom(H_W, W_N, H_W / W_N, log = TRUE),
+         HS_LL = dbinom(H_S, S_N, H_S / S_N, log = TRUE),
+         LL = FA_LL + HW_LL + HS_LL) %>%
+  select(pOld, LL) %>%
+  summarise(null_LL = sum(LL))
+```
+
+
+```{r fit_std_2HT_pooled, dependson=c("cell_counts_pooled", "std_2HT_LL")}
+twoHT_std_fit_pooled <- optimx(par = c("DN"=.5, "DO_W"=.5, "DO_S"=.75,
+                                     "GO_Cons" = .25, 'GO_Neut' = .5, 'GO_Lib' = .75
+                                     ),
+                             fn = twoHT_LL,
+                             method = "nlminb",
+                             itnmax = 3000,
+                             lower = c(0, 0, 0, 0, 0, 0),
+                             upper = c(1, 1, 1, 1, 1, 1),
+                             control = list(kkt = FALSE),
+                             counts = delayed_counts_by_bias
+                             )
+```
+
+
+```{r std_twoHT_pooled_GOF, dependson="fit_std_2HT_pooled"}
+
+twoHT_std_GOF_pooled <-
+  select(twoHT_std_fit_pooled, LL = value, fevals, gevals, niter, convcode) %>%
+  mutate(LL = -LL) %>%
+  bind_cols(null_LL_pooled) %>%
+  mutate(G2 = -2*(LL - null_LL)) %>%
+  mutate(df = 3,
+         p.value = pchisq(G2, df=df, lower.tail = FALSE)
+         ) %>%
+  select(LL, null_LL, G2, df, p.value, fevals:convcode)
+```
+
+
+```{r std_twoHT_pooled_params, dependson="fit_std_2HT_pooled"}
+
+twoHT_std_params_pooled <- select(.data = twoHT_std_fit_pooled,
+                                  DN, DO_W, DO_S, GO_Cons, GO_Neut, GO_Lib
+                                  )
+rm(twoHT_std_fit_pooled)
+```
+
+
+```{r std_twoHT_ROC_pooled_predictions, dependson="std_twoHT_pooled_params"}
+
+twoHT_std_ROC_curve_pooled <-
+  mutate(.data = twoHT_std_params_pooled,
+         twoHT = list(
+    data.frame(FAR = rep(FAR_points, 2),
+               strength = factor(rep(c("W", "S"), each = length(FAR_points)),
+                                 levels = c("W", "S")),
+               HR = c( ((1-DO_W)/(1-DN)*FAR_points) + DO_W,
+                       ((1-DO_S)/(1-DN)*FAR_points) + DO_S
+               ))
+    
+    )) %>%
+  select(twoHT) %>%
+  unnest() %>%
+  filter(HR <= 1)
+
+twoHT_std_ROC_points_pooled <-
+  mutate(.data = twoHT_std_params_pooled,
+         x = list(data.frame(
+           twoHT(c("DN"=DN, "DO_W"=DO_W, "DO_S"=DO_S,
+                   "GO_Cons"=GO_Cons, "GO_Neut"=GO_Neut, "GO_Lib"=GO_Lib
+                 )),
+           pOld = c("25%", "50%", "75%"),
+           stringsAsFactors = FALSE
+         ))) %>%
+  select(x)%>%
+  unnest() %>%
+  gather(key="strength", value="HR", HR_W, HR_S) %>%
+  mutate(strength = sub("HR_", "", strength)) %>%
+  filter(HR <= 1) %>%
+  select(pOld, strength, FAR, HR) %>%
+  bind_rows(pred = .,
+            obs = obs_ROC_data_pooled,
+            .id = "type")
+```
+
+
+```{r std_twoHT_ROC_pooled_plot, fig.width=8, fig.height=8, dependson="std_twoHT_ROC_pooled_predictions"}
+ggplot(twoHT_std_ROC_points_pooled,
+       aes(x=FAR, y=HR, color=strength, shape=pOld)
+              ) +
+  geom_point(size=4) +
+  geom_line(aes(linetype=type, group=strength),
+            data = filter(twoHT_std_ROC_points_pooled, type=="obs"),
+            size=1.75
+            ) +
+  geom_line(aes(x=FAR, y=HR, color=strength, linetype=type),
+            data = mutate(twoHT_std_ROC_curve_pooled, type="pred"),
+            size=1.75,
+            inherit.aes = FALSE
+            ) +
+  scale_x_continuous("False Alarm Rate", limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)
+                     ) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)
+                     ) +
+  scale_color_manual("Strength", values = c("#2470b7", "#b70e1c")) +
+  scale_linetype_discrete("Model",
+                          limits = c("pred", "obs"),
+                          labels = c("obs" = "Observed",
+                                     "pred" = "Two HT"
+                                     )
+                          ) +
+  coord_fixed() +
+  ggtitle("Two-HT Model ROC (Pooled Data)") +
+  theme_bw(base_size = 16) +
+  theme(plot.title = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.size = unit(2, "lines"),
+        legend.position = c(.65, .2),
+        legend.box = "horizontal")
+```
+
+```{r pooled_param_table, dependson=c("std_twoHT_pooled_params", "std_twoHT_pooled_GOF")}
+kable(twoHT_std_params_pooled,
+      type="HTML",
+      digits=3,
+      col.names = formatted_names_map[names(twoHT_std_params_pooled)],
+      escape=FALSE,
+      row.names = FALSE
+      ) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+kable(twoHT_std_GOF_pooled,
+      type="HTML",
+      digits=3,
+      col.names = formatted_names_map[names(twoHT_std_GOF_pooled)],
+      escape=FALSE,
+      row.names = FALSE
+      ) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+
+# Pooled vs. Averaged Parameter Comparison
+```{r, pooled_vs_avg_params, dependson=c("std_twoHT_pooled_params", "std_twoHT_GOF")}
+x <- gather(twoHT_std_avg_params, "param", "value")
+y <- gather(twoHT_std_params_pooled, "param", "value")
+
+ggplot(bind_rows(avg=x, pooled=y, .id="model"),
+       aes(x=param, y=value, color=model)
+       ) +
+  geom_point(size=3) +
+  scale_color_discrete(limits=c("pooled","avg"),
+                       labels=c("Pooled Data",
+                                "Averaged Parameters")
+                       ) +
+  ggtitle("Pooled vs. Averaged Parameters")
 
 rm(x, y)
 ```
