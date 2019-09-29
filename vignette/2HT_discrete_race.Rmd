@@ -271,7 +271,7 @@ load(file.path(root_dir, "data", "SvDPRec.Rdata"))
 test <- select(test, -list)
 ```
 
-
+# By-Subject Modeling
 ```{r observed_RT_choice_data}
 speeded_RT_choice_quantiles <- filter(test, !is.na(type)) %>%
   filter(speeded_RT > 200) %>%
@@ -539,6 +539,8 @@ write.csv(twoHT_DR_GOF_subject,
 ```
 
 
+## Averaged Results
+
 ```{r qp_plot, fig.width=10, fig.height=7}
 
 ggplot(conditional_quantiles_avg,
@@ -618,6 +620,8 @@ cat("<ul><li>",
     )
 ```
 
+
+## Individual Subjects
 
 ```{r subject_plots, fig.width=11, fig.align="center", results="asis"}
 
@@ -723,5 +727,250 @@ for (s in unique(speeded_RT_choice_quantiles$subject)) {
                           widths=c(.27, .73)
                           )
 }
+```
+
+# Aggregated Modeling
+
+```{r pooled_RT_quantiles}
+
+n_lte_RT <- function(x, y) {
+  
+  N <- numeric(length(x))
+  for (i in 1:length(x)) {
+    N[i] <- sum(y <= x[i])
+  }
+  
+  if (!is.null(names(x))) {
+    names(N) <- names(x)
+  }
+  
+  return(N)
+}
+
+test <- filter(test, !is.na(type)) %>%
+  filter(speeded_RT > 200) %>%
+  mutate(speeded_RT = speeded_RT/1000)
+
+pooled_RT_bin_counts <-
+  group_by(.data = speeded_RT_choice_quantiles,
+           strength, speeded_correct, quantile) %>%
+  summarise(value = mean(value)) %>%
+  ungroup() %>%
+  arrange(strength, speeded_correct, value) %>%
+  nest(quantile, value, .key = "quantiles") %>%
+  left_join(x=.,
+            y=summarise(group_by(.data=test, strength, speeded_correct),
+                        speeded_RT=list(speeded_RT)
+                        ),
+            by=c("strength", "speeded_correct")
+            ) %>%
+  group_by(strength, speeded_correct) %>%
+  mutate(bin_counts = list(n_lte_RT(x = quantiles[[1]]$value, y = unlist(speeded_RT)))
+         ) %>%
+  select(strength, speeded_correct, quantiles, bin_counts) %>%
+  unnest() %>%
+  mutate(bin_counts = c(bin_counts[1], diff(bin_counts)),
+         p = bin_counts/sum(bin_counts)
+         ) %>%
+  ungroup()
+
+```
+
+```{r fit_yoked_pooled, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions", "pooled_RT_quantiles")}
+
+starting_theta <- c("dNew.L" = .5, "dOld.W" = .5, "dOld.S"=.75, "gOld"=.5,
+                    "mu.do" = .5, "mu.g" = .75, "sigma" = .25, "nu" = .25
+                    )
+twoHT_DR_yoked_fit_pooled <- optimx(starting_theta,
+                                     fn = DR_obj,
+                                     method = c("nmkb", "nlminb"),
+                                     itnmax = 500,
+                                     lower = c(.01, .01, .01, .01, .01, .01, .01, .01),
+                                     upper = c(1,   1,   1,   1,   2,   2,   .5,  .5),
+                                     control = list(kkt = FALSE, follow.on = TRUE),
+                                     data = pooled_RT_bin_counts,
+                                     p_names = names(starting_theta)
+                                     )
+
+twoHT_DR_yoked_fit_pooled <- twoHT_DR_yoked_fit_pooled[2, ] # Take nlminb result
+```
+
+```{r fit_unyoked_pooled, dependson=c("discrete_race_exgaussians", "discrete_race_objective_functions", "pooled_RT_quantiles")}
+
+starting_theta <- c("dNew.L" = .5, "dOld.W" = .5, "dOld.S"=.75, "gOld"=.5,
+                    "mu.do" = .5, "mu.g" = .75, "mu.dn"=.7, "sigma" = .25, "nu" = .25
+                    )
+twoHT_DR_unyoked_fit_pooled <- optimx(starting_theta,
+                                      fn = DR_obj,
+                                      method = c("nmkb", "nlminb"),
+                                      itnmax = 500,
+                                      lower = c(.01, .01, .01, .01, .01, 0.01, .01, .01, .01),
+                                      upper = c(1,   1,   1,   1,   2,   2,    2,   .5,  .5),
+                                      control = list(kkt = FALSE, follow.on = TRUE),
+                                      data = pooled_RT_bin_counts,
+                                      p_names = names(starting_theta)
+                                      )
+
+twoHT_DR_unyoked_fit_pooled <- twoHT_DR_unyoked_fit_pooled[2, ] # Take nlminb result
+```
+
+```{r pooled_parameters, dependson=c("fixed_detect_yoked", "fit_unyoked_pooled", "fit_yoked_pooled")}
+
+twoHT_DR_fits_pooled <- bind_rows("unyoked" = twoHT_DR_unyoked_fit_pooled,
+                                  "yoked"= twoHT_DR_yoked_fit_pooled,
+                                  .id = "model"
+                                  )
+
+fitted_param_list_pooled <- lapply(c("unyoked" = list(twoHT_DR_unyoked_fit_pooled),
+                                     "yoked" = list(twoHT_DR_yoked_fit_pooled)
+                                     ),
+                                   FUN = function(x) {
+                                     columns <- union(c("dNew.L", "dOld.W", "dOld.S"), colnames(coef(x)))
+                                     unlist(x[columns])
+                                   }
+                                   )
+
+twoHT_DR_params_pooled <- select(.data = twoHT_DR_fits_pooled, model, !!!param_names)
+```
+
+
+```{r predicted_pooled_probabilities, dependson="pooled_parameters"}
+
+predicted_probabilities_pooled <-
+  mapply(DR_predictions,
+         fitted_param_list_pooled,
+         list(pooled_RT_bin_counts, pooled_RT_bin_counts),
+         SIMPLIFY = FALSE
+         ) %>% 
+  bind_rows(.id="model") %>%
+  mutate(model = sub("[[:digit:]]+", "", model)) %>%
+  select(-bin_counts, -p) %>%
+  rename(p = predicted_p)
+
+
+obs_p_pooled <- group_by(pooled_RT_bin_counts, strength) %>%
+  mutate(p = p*c(rep(sum(bin_counts[!speeded_correct])/sum(bin_counts), 6),
+                 rep(sum(bin_counts[speeded_correct])/sum(bin_counts), 6)
+                 )
+         ) %>%
+  ungroup()
+
+
+probabilities_pooled <- bind_rows(predicted_probabilities_pooled,
+                           select(mutate(obs_p_pooled, model = "obs"),
+                                  -bin_counts)
+                           ) %>% 
+  rename(type=model)
+
+
+accuracy_pooled <- group_by(probabilities_pooled,
+                            type, strength, speeded_correct
+                            ) %>%
+  summarise(p = sum(p)) %>%
+  ungroup()
+```
+
+```{r predicted_quantiles_pooled, dependson=c("pooled_parameters", "predicted_pooled_probabilities")}
+predicted_quantiles_pooled <-
+  mapply(DR_quantiles,
+         fitted_param_list_pooled,
+         list(pooled_RT_bin_counts, pooled_RT_bin_counts),
+         SIMPLIFY = FALSE
+         ) %>% 
+  bind_rows(.id="model") %>%
+  select(-bin_counts, -value, -p) %>%
+  rename(RT = predicted_qValue)
+
+obs_q_pooled <- select(pooled_RT_bin_counts, -bin_counts, -p) %>%
+  mutate(model = "obs") %>%
+  rename(RT = value)
+
+quantiles_pooled <- bind_rows(predicted_quantiles_pooled,
+                              obs_q_pooled) %>%
+  rename(type = model) %>%
+  filter(quantile != "100%")
+
+conditional_quantiles_pooled <-
+  left_join(quantiles_pooled,
+            accuracy_pooled,
+            by = c("type", "strength", "speeded_correct")
+            ) %>%
+  mutate(p = p*(as.numeric(sub("%", "", quantile)) / 100))
+
+conditional_quantiles_pooled <- mutate(conditional_quantiles_pooled,
+                                       strength = factor(strength, levels = c("L","W","S"))
+                                       )
+quantiles_pooled <- mutate(quantiles_pooled, strength = factor(strength, levels = c("L","W","S")))
+```
+
+
+```{r pooled_GOF}
+null_LL <- group_by(obs_p_pooled, strength) %>%
+  summarise(LL = dmultinom(bin_counts, sum(bin_counts), p, log=TRUE)) %>%
+  summarise(null_LL = sum(LL))
+
+twoHT_DR_GOF_pooled <- select(.data = twoHT_DR_fits_pooled,
+                               model, value, fevals, gevals, niter, convcode) %>%
+  mutate(LL = -value,
+         null_LL = null_LL$null_LL) %>%
+  mutate(G2 = -2*(LL - null_LL)) %>%
+  select(model, LL, null_LL, G2, fevals, gevals, niter, convcode)
+```
+
+
+```{r qp_plot_pooled, fig.width=10, fig.height=7}
+
+ggplot(conditional_quantiles_pooled,
+       aes(x=RT, y=p, color=speeded_correct, linetype=type, shape=type)) +
+  geom_point(size=2, stroke=1.5) +
+  geom_line(size=1) +
+  facet_grid(~strength,
+             labeller = as_labeller(c("L" = "Lure", "W" = "Weak", "S" = "Strong"))
+             ) +
+  scale_color_manual("Accuracy",
+                     values = RColorBrewer::brewer.pal(3, 'Set1')[1:2],
+                     breaks=c("FALSE","TRUE"),
+                     labels=c("Incorrect", "Correct")) +
+  scale_linetype_manual(NULL,
+                        values = c(6,5,1),
+                        limits=  c("unyoked", "yoked",  "obs"),
+                        labels = c("unyoked" = "Three Mu's",
+                                   "yoked" = "Two Mu's",
+                                   "obs" = "Observed"
+                                   )
+                          ) +
+  scale_shape_manual(NULL,
+                     values = c(17, 15, 16),
+                     limits=  c("unyoked", "yoked", "obs"),
+                     labels = c("unyoked" = "Three Mu's",
+                                "yoked" = "Two Mu's",
+                                "obs" = "Observed"
+                                )
+                        ) +
+  scale_x_continuous("Response Time (s.)") +
+  ggtitle("2HT Discrete Race",
+          subtitle="Conditional Quantiles (Pooled)") +
+  theme_bw(base_size=16) +
+  theme(plot.title = element_text(hjust=.5),
+        plot.subtitle = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.size = unit(1.5, 'lines')
+        )
+```
+
+```{r pooled_parameter_tables}
+kable(twoHT_DR_params_pooled,
+      digits=3,
+      col.names = formatted_names_map[names(twoHT_DR_params_pooled)],
+      escape=FALSE) %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::column_spec(1, bold=TRUE)
+
+kable(twoHT_DR_GOF_pooled,
+      digits=3,
+      col.names = formatted_names_map[names(twoHT_DR_GOF_pooled)],
+      escape=FALSE) %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::column_spec(1, bold=TRUE)
 ```
 
