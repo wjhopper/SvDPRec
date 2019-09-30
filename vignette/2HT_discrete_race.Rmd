@@ -544,28 +544,28 @@ write.csv(twoHT_DR_GOF_subject,
 ```{r qp_plot, fig.width=10, fig.height=7}
 
 ggplot(conditional_quantiles_avg,
-       aes(x=RT, y=p, color=speeded_correct, linetype=type, shape=type)) +
+       aes(x=RT, y=p, color=type, linetype=speeded_correct, shape=type)) +
   geom_point(size=2, stroke=1.5) +
   geom_line(size=1) +
   facet_grid(~strength,
              labeller = as_labeller(c("L" = "Lure", "W" = "Weak", "S" = "Strong"))
              ) +
-  scale_color_manual("Accuracy",
-                     values = RColorBrewer::brewer.pal(3, 'Set1')[1:2],
-                     breaks=c("FALSE","TRUE"),
-                     labels=c("Incorrect", "Correct")) +
-  scale_linetype_manual(NULL,
-                        values = c(6,5,2,1),
-                        limits=  c("unyoked", "yoked", "yoked_fixed", "obs"),
-                        labels = c("unyoked" = "Three Mu's",
-                                   "yoked" = "Two Mu's",
-                                   "yoked_fixed" = "Two Mu's\nDetect Fixed",
-                                   "obs" = "Observed"
-                                   )
+  scale_linetype_discrete("Accuracy",
+                          limits = c("FALSE", "TRUE"),
+                          labels = c("Incorrect", "Correct")
                           ) +
-  scale_shape_manual(NULL,
-                     values = c(17, 15, 4, 16),
-                     limits=  c("unyoked", "yoked", "yoked_fixed", "obs"),
+  scale_color_brewer("Model",
+                     palette = "Set1",
+                     limits =  c("obs", "unyoked", "yoked", "yoked_fixed"),
+                     labels = c("unyoked" = "Three Mu's",
+                                "yoked" = "Two Mu's",
+                                "yoked_fixed" = "Two Mu's\nDetect Fixed",
+                                "obs" = "Observed"
+                                )
+                          ) +
+  scale_shape_manual("Model",
+                     values = c(16, 17, 15, 4),
+                     limits =  c("obs", "unyoked", "yoked", "yoked_fixed"),
                      labels = c("unyoked" = "Three Mu's",
                                 "yoked" = "Two Mu's",
                                 "yoked_fixed" = "Two Mu's\nDetect Fixed",
@@ -573,6 +573,7 @@ ggplot(conditional_quantiles_avg,
                                 )
                         ) +
   scale_x_continuous("Response Time (s.)") +
+  guides(linetype = guide_legend(order = 1)) +
   ggtitle("2HT Discrete Race",
           subtitle="Conditional Quantiles (Average)") +
   theme_bw(base_size=16) +
@@ -905,14 +906,14 @@ quantiles_pooled <- mutate(quantiles_pooled, strength = factor(strength, levels 
 
 
 ```{r pooled_GOF}
-null_LL <- group_by(obs_p_pooled, strength) %>%
+null_LL_pooled <- group_by(obs_p_pooled, strength) %>%
   summarise(LL = dmultinom(bin_counts, sum(bin_counts), p, log=TRUE)) %>%
   summarise(null_LL = sum(LL))
 
 twoHT_DR_GOF_pooled <- select(.data = twoHT_DR_fits_pooled,
                                model, value, fevals, gevals, niter, convcode) %>%
   mutate(LL = -value,
-         null_LL = null_LL$null_LL) %>%
+         null_LL = null_LL_pooled$null_LL) %>%
   mutate(G2 = -2*(LL - null_LL)) %>%
   select(model, LL, null_LL, G2, fevals, gevals, niter, convcode)
 ```
@@ -921,41 +922,41 @@ twoHT_DR_GOF_pooled <- select(.data = twoHT_DR_fits_pooled,
 ```{r qp_plot_pooled, fig.width=10, fig.height=7}
 
 ggplot(conditional_quantiles_pooled,
-       aes(x=RT, y=p, color=speeded_correct, linetype=type, shape=type)) +
-  geom_point(size=2, stroke=1.5) +
+       aes(x=RT, y=p, color=type, linetype=speeded_correct, shape=type)) +
+  geom_point(size=2) +
   geom_line(size=1) +
   facet_grid(~strength,
              labeller = as_labeller(c("L" = "Lure", "W" = "Weak", "S" = "Strong"))
              ) +
-  scale_color_manual("Accuracy",
-                     values = RColorBrewer::brewer.pal(3, 'Set1')[1:2],
-                     breaks=c("FALSE","TRUE"),
-                     labels=c("Incorrect", "Correct")) +
-  scale_linetype_manual(NULL,
-                        values = c(6,5,1),
-                        limits=  c("unyoked", "yoked",  "obs"),
-                        labels = c("unyoked" = "Three Mu's",
-                                   "yoked" = "Two Mu's",
-                                   "obs" = "Observed"
-                                   )
+  scale_linetype_discrete("Accuracy",
+                          limits = c("FALSE", "TRUE"),
+                          labels = c("Incorrect", "Correct")
                           ) +
-  scale_shape_manual(NULL,
+  scale_colour_brewer("Model",
+                      palette = "Set1",
+                      limits = c("obs", "unyoked", "yoked"),
+                      labels = c("yoked" = "Two Mu's",
+                                 "unyoked" = "Three Mu's",
+                                 "obs" = "Observed")
+                      ) +
+  scale_shape_manual("Model",
                      values = c(17, 15, 16),
-                     limits=  c("unyoked", "yoked", "obs"),
-                     labels = c("unyoked" = "Three Mu's",
-                                "yoked" = "Two Mu's",
-                                "obs" = "Observed"
-                                )
-                        ) +
-  scale_x_continuous("Response Time (s.)") +
+                     limits = c("obs", "unyoked", "yoked"),
+                     labels = c("yoked" = "Two Mu's",
+                                "unyoked" = "Three Mu's",
+                                "obs" = "Observed")
+                     ) +
+  guides(linetype = guide_legend(order = 1)) +
   ggtitle("2HT Discrete Race",
           subtitle="Conditional Quantiles (Pooled)") +
+  scale_x_continuous("Response Time (s.)") +
   theme_bw(base_size=16) +
   theme(plot.title = element_text(hjust=.5),
         plot.subtitle = element_text(hjust=.5),
         strip.background = element_blank(),
-        legend.key.size = unit(1.5, 'lines')
+        legend.key.width = unit(2,"line")
         )
+
 ```
 
 ```{r pooled_parameter_tables}
