@@ -877,7 +877,7 @@ twoHT_std_ROC_points_pooled <-
 ```{r std_twoHT_ROC_pooled_plot, fig.width=6.5, fig.height=6.5, dependson="std_twoHT_ROC_pooled_predictions"}
 ggplot(twoHT_std_ROC_points_pooled,
        aes(x=FAR, y=HR, color=type, shape=pOld)
-              ) +
+       ) +
   geom_line(aes(x=FAR, y=HR, color=type, linetype=strength),
             data = mutate(twoHT_std_ROC_curve_pooled, type="pred"),
             size=1.75,

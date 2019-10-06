@@ -37,6 +37,7 @@ load(file.path(root_dir, "data","SvDPRec.Rdata"))
 test <- select(test, -list)
 ```
 
+# By-Subject Modeling
 ```{r cell_counts, dependson=c("load_data")}
 delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
   select(-starts_with("speeded")) %>%
@@ -83,7 +84,7 @@ null_LL <- mutate(delayed_counts_by_sub_bias,
   summarise(null_LL = sum(LL))
 ```
 
-## Subject-wise Maximum Likelihood Estimation
+## Maximum Likelihood Estimation
 ```{r SDT_model_functions}
 SDT <- function(d, s, crit) {
 
@@ -536,7 +537,6 @@ ggplot(Stan_ROC_preds,
 ```
 
 
-### Parameter Correlations
 ```{r MLE_vs_bayes_point, dependson=c("Stan_parameter_summaries", "MLE_parameter_summaries")}
 ggplot(bind_rows(MLE = select(UVSD_MLE_params, subject, Weak = d.W, Strong = d.S, sigma = s,
                               crit_C = c.C, crit_N = c.N, crit_L = c.L),
@@ -626,3 +626,185 @@ ggplot(bind_rows(stan = rename(sub_param_means, crit_C = crit_sub_3,
   ylab("Stan") +
   facet_wrap(~param, labeller = label_parsed)
 ```
+
+# Aggregated Modeling
+```{r cell_counts_pooled}
+delayed_counts_by_bias <-
+  select(.data = delayed_counts_by_sub_bias, -subject) %>%
+  group_by(pOld) %>%
+  summarise_all(.funs = "sum")
+
+obs_ROC_data_pooled <-
+  mutate(delayed_counts_by_bias,
+         FAR = FA / L_N,
+         HR_W = H_W / W_N,
+         HR_S = H_S / S_N,
+         pOld = sprintf("%2.0f%%", pOld * 100)) %>%
+  select(pOld, FAR, HR_W, HR_S) %>%
+  gather(key="strength", value="HR", HR_W, HR_S) %>%
+  mutate(strength = sub("HR_", "", strength)) %>%
+  select(pOld, strength, FAR, HR)
+```
+
+
+```{r null_LL_pooled}
+null_LL_pooled <-
+  mutate(delayed_counts_by_bias,
+         FA_LL = dbinom(FA, L_N, FA / L_N, log = TRUE),
+         HW_LL = dbinom(H_W, W_N, H_W / W_N, log = TRUE),
+         HS_LL = dbinom(H_S, S_N, H_S / S_N, log = TRUE),
+         LL = FA_LL + HW_LL + HS_LL) %>%
+  select(pOld, LL) %>%
+  summarise(null_LL = sum(LL))
+```
+
+
+```{r MLE_fit_pooled, dependson=c("cell_counts_pooled", "SDT_model_functions")}
+
+UVSD_fits_pooled <- optimx(par = c("d.W"=1.5, "d.S"=2.5, "s" = 1.2,
+                                   crit = c(1.25, 1, .75)),
+                           fn = fit_SDT,
+                           method = "nlminb",
+                           itnmax = 3000,
+                           lower = c(0, 0, 0.1, 0.1, -3, -3, -3),
+                           upper = c(4, 4, 2, 2, 3, 3, 3),
+                           control = list(kkt = FALSE),
+                           H_S = delayed_counts_by_bias[c("H_S", "S_N")],
+                           H_W = delayed_counts_by_bias[c("H_W", "W_N")],
+                           FA = delayed_counts_by_bias[c("FA", "L_N")]
+                           )
+  
+  ## Order the criterion columns from largest (most conservative) to lowest (most liberal)
+  crit_columns <- startsWith(names(UVSD_fits_pooled), "crit")
+  decreasing_crit_values <- sort(unlist(UVSD_fits_pooled[crit_columns]), decreasing = TRUE)
+  names(decreasing_crit_values) <- paste0("crit", 1:length(decreasing_crit_values))
+  UVSD_fits_pooled[crit_columns] <- as.list(decreasing_crit_values)
+
+```
+
+```{r MLE_pooled_parameters, dependson="MLE_fit_pooled"}
+UVSD_pooled_params <- select(.data = UVSD_fits_pooled,
+                             d.W, d.S, s, c.C = crit1, c.N = crit2, c.L = crit3
+                             )
+```
+
+```{r MLE_pooled_GOF, dependson="MLE_fit_pooled"}
+UVSD_pooled_GOF <- select(UVSD_fits_pooled, value, fevals, gevals, niter, convcode) %>%
+  mutate(LL = -value,
+         null_LL = null_LL_pooled$null_LL,
+         G2 = -2*(LL - null_LL),
+         df = 3,
+         p.value = pchisq(G2, df=df, lower.tail = FALSE)
+         ) %>%
+  select(LL, null_LL, G2, df, p.value, fevals:convcode)
+
+rm(UVSD_fits_pooled)
+```
+
+```{r UVSD_pooled_ROC_preds, dependson="MLE_pooled_parameters"}
+
+UVSD_pooled_ROC_curve <-
+  mutate(.data = UVSD_pooled_params,
+         SDT = list(
+           data.frame(FAR = rep(FAR_points, 2),
+                      HR = pnorm(c((qnorm(FAR_points) + d.W) / s,
+                                   (qnorm(FAR_points) + d.S) / s)
+                                 ),
+                      strength = factor(rep(c("W", "S"), each = length(FAR_points)),
+                                        levels = c("W", "S")
+                                        )
+                      )
+           )) %>%
+  unnest() %>%
+  mutate(type="UVSD")
+
+UVSD_pooled_ROC_points <-
+  transmute(UVSD_pooled_params,
+            SDT  = list(
+              as.data.frame(c(SDT(d=c(d.W, d.S), s=s, crit=c(c.C, c.N, c.L)),
+                              pOld = list(c("25%","50%","75%"))
+                              ),
+                            stringsAsFactors=FALSE
+                            )
+              )) %>%
+  unnest() %>%
+  rename(S=HitRate_Strong, W=HitRate_Weak, FAR=FalseAlarmRate) %>%
+  gather(key = "strength", value="HR", S, W) %>%
+  select(pOld, strength, FAR, HR) %>%
+  bind_rows("UVSD" = .,
+            "obs" = obs_ROC_data_pooled,
+            .id="type"
+            )
+```
+
+```{r UVSD_pooled_ROC_plot, fig.width=6.5, fig.height=6.5, dependson="UVSD_pooled_ROC_preds"}
+ggplot(UVSD_pooled_ROC_points,
+       aes(x=FAR, y=HR, shape=pOld, color=type)
+       ) +
+  geom_line(aes(linetype=strength, group=strength),
+            data = filter(UVSD_pooled_ROC_points, type=="obs"),
+            size=1.75
+            ) +
+  geom_line(aes(x=FAR, y=HR, color=type, linetype=strength),
+            data = UVSD_pooled_ROC_curve,
+            size=1.75,
+            inherit.aes = FALSE
+            ) +
+  geom_point(size=4) +
+  scale_x_continuous("False Alarm Rate",
+                     limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)
+                     ) +
+  scale_y_continuous("Hit Rate",
+                     limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)
+                     ) +
+  scale_colour_brewer("Model",
+                      palette = "Set1",
+                      limits = c("obs", "UVSD"),
+                      labels = c("obs" = "Observed",
+                                 "UVSD" = "UVSD")
+                      ) +
+  scale_linetype_discrete("Strength",
+                          limits = c("W", "S"),
+                          labels = c("W" = "Weak", "S" = "Strong")
+                          ) +
+  coord_fixed() +
+  ggtitle("UVSD Model ROC (Pooled Data)") +
+  theme_bw(base_size = 16) +
+  theme(plot.title = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.size = unit(2, "lines"),
+        legend.position = c(.6, .2),
+        legend.box = "horizontal")
+```
+
+```{r UVSD_pooled_tables, dependson=c("MLE_pooled_GOF", "MLE_pooled_parameters")}
+
+kable(UVSD_pooled_params, digits=3, type="HTML", escape = FALSE,
+      caption = "Pooled parameter estimates",
+      row.names = FALSE,
+      col.names = c("d'<sub>W</sub>", "d'<sub>S</sub>", "\u03c3",
+                    "C<sub>c</sub>", "C<sub>n</sub>", "C<sub>l</sub>")
+      ) %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "float_left")
+
+kable(select(.data = UVSD_pooled_GOF, LL, null_LL, G2, df, p.value),
+      type="HTML", digits=3,
+      caption = "Pooled Goodness of Fit",
+      col.names = c("LL", "Null LL", "G<sup>2</sup>", "df.", "<i>p</i>"),
+      escape = FALSE) %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "left")
+```
+
+```{r avg_vs_pooled_params}
+bind_rows("avg"=UVSD_MLE_params_avg,
+          "pooled"=UVSD_pooled_params,
+          .id = "model") %>%
+  gather(key="param", value="value", -model) %>%
+  ggplot(aes(x=param, y=value, color=model)) +
+  geom_point(aes(group=model),
+             position = position_dodge(width=.25)
+             )
+```
+
