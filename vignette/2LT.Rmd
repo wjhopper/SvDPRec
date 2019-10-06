@@ -33,51 +33,6 @@ load(file.path(root_dir, "data","SvDPRec.Rdata"))
 test <- select(test, -list)
 ```
 
-```{r cell_counts, dependson="load_data"}
-delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
-  select(-starts_with("speeded")) %>%
-  rename(correct = delayed_correct) %>%
-  count(subject, strength, pOld, correct) %>%
-  complete(subject, strength, pOld, correct,
-           fill = list(n=0)) %>%
-  unite(col = "resp_type", strength, correct) %>%
-  spread(resp_type, n) %>%
-  rename(FA = L_FALSE, CR = L_TRUE,
-         M_S = S_FALSE, H_S = S_TRUE,
-         M_W = W_FALSE, H_W = W_TRUE) %>%
-  mutate(L_N = FA + CR,
-         S_N = M_S + H_S,
-         W_N = M_W + H_W) %>%
-  select(subject, pOld, FA, L_N, H_S, S_N, H_W, W_N)
-
-```
-
-```{r empirical_roc_data, dependson="cell_counts"}
-obs_ROC_data <- mutate(delayed_counts_by_sub_bias,
-                       FAR = FA/L_N,
-                       HR_W = H_W/W_N,
-                       HR_S = H_S/S_N,
-                       pOld = sprintf("%2.0f%%", pOld*100)) %>%
-  select(subject, pOld, FAR, HR_W, HR_S) %>%
-  gather(key="strength", value="HR", HR_W, HR_S) %>%
-  mutate(strength = sub("HR_", "", strength)) %>%
-  select(subject, pOld, strength, FAR, HR)
-
-avg_obs_ROC_data <- group_by(obs_ROC_data, pOld, strength) %>%
-  summarise_at(.vars = c("FAR", "HR"), .funs = "mean") %>%
-  ungroup()
-```
-
-```{r null_LL, dependson=c("cell_counts")}
-null_LL <- mutate(delayed_counts_by_sub_bias,
-                  FA_LL = dbinom(FA, L_N, FA / L_N, log = TRUE),
-                  HW_LL = dbinom(H_W, W_N, H_W / W_N, log = TRUE),
-                  HS_LL = dbinom(H_S, S_N, H_S / S_N, log = TRUE),
-                  LL = FA_LL + HW_LL + HS_LL) %>% 
-  select(subject, pOld, LL) %>%
-  group_by(subject) %>%
-  summarise(null_LL = sum(LL))
-```
 
 ```{r 2LT_LL}
 softmax <- function(x) {
@@ -87,6 +42,28 @@ softmax <- function(x) {
 ilogit <- function(x, max=1) {
   return(max/(1+exp(-x)))
 }
+
+calculate_RO_parameters <- function(b, reverse=FALSE) {
+
+  # Compute response probabilities from each detect state based on bias parameter
+  if (b > 2 || b < -1) {
+    stop("Bias parameter must lie within [-1, 2]")
+  }
+  
+  param_names <- names(b)
+  names(b) <- sub("b_", "", param_names)
+  
+  RO_DN <- abs(pmin(b, 0))
+  RO_FD <- pmax(pmin(1-b, 1), 0)
+  RO_DO <-  2 - pmax(b, 1)
+  theta <- c("RO_DN"=RO_DN, "RO_FD"=RO_FD, "RO_DO"=RO_DO)
+  
+  if (reverse) {
+    theta <- 1-theta
+  }
+  return(theta)
+}
+
 
 parameter_scaling <- function(theta) {
 
@@ -150,6 +127,55 @@ twoLT_G2 <- function(theta, counts) {
 }
 ```
 
+
+# By-Subject Modeling
+```{r cell_counts, dependson="load_data"}
+delayed_counts_by_sub_bias <- filter(test, !is.na(type)) %>%
+  select(-starts_with("speeded")) %>%
+  rename(correct = delayed_correct) %>%
+  count(subject, strength, pOld, correct) %>%
+  complete(subject, strength, pOld, correct,
+           fill = list(n=0)) %>%
+  unite(col = "resp_type", strength, correct) %>%
+  spread(resp_type, n) %>%
+  rename(FA = L_FALSE, CR = L_TRUE,
+         M_S = S_FALSE, H_S = S_TRUE,
+         M_W = W_FALSE, H_W = W_TRUE) %>%
+  mutate(L_N = FA + CR,
+         S_N = M_S + H_S,
+         W_N = M_W + H_W) %>%
+  select(subject, pOld, FA, L_N, H_S, S_N, H_W, W_N)
+
+```
+
+```{r empirical_roc_data, dependson="cell_counts"}
+obs_ROC_data <- mutate(delayed_counts_by_sub_bias,
+                       FAR = FA/L_N,
+                       HR_W = H_W/W_N,
+                       HR_S = H_S/S_N,
+                       pOld = sprintf("%2.0f%%", pOld*100)) %>%
+  select(subject, pOld, FAR, HR_W, HR_S) %>%
+  gather(key="strength", value="HR", HR_W, HR_S) %>%
+  mutate(strength = sub("HR_", "", strength)) %>%
+  select(subject, pOld, strength, FAR, HR)
+
+avg_obs_ROC_data <- group_by(obs_ROC_data, pOld, strength) %>%
+  summarise_at(.vars = c("FAR", "HR"), .funs = "mean") %>%
+  ungroup()
+```
+
+```{r null_LL, dependson=c("cell_counts")}
+null_LL <- mutate(delayed_counts_by_sub_bias,
+                  FA_LL = dbinom(FA, L_N, FA / L_N, log = TRUE),
+                  HW_LL = dbinom(H_W, W_N, H_W / W_N, log = TRUE),
+                  HS_LL = dbinom(H_S, S_N, H_S / S_N, log = TRUE),
+                  LL = FA_LL + HW_LL + HS_LL) %>% 
+  select(subject, pOld, LL) %>%
+  group_by(subject) %>%
+  summarise(null_LL = sum(LL))
+```
+
+
 ```{r 2LT_fit, dependson=c("2LT_LL","cell_counts")}
 twoLT_fit_optimx <- foreach(sub = split(delayed_counts_by_sub_bias,
                                            delayed_counts_by_sub_bias$subject)
@@ -202,12 +228,12 @@ twoLT_params_scaled_avg <- summarise_if(twoLT_params_scaled,  is.numeric, .funs 
 twoLT_GOF <- select(twoLT_fits, subject, LL = value, fevals, gevals, niter, convcode) %>%
   mutate(LL = -LL) %>%
   left_join(null_LL, by="subject") %>%
-  mutate(calc_G2 = -2*(LL - null_LL)) %>%
-  select(subject, LL, null_LL, calc_G2, fevals:convcode)
+  mutate(G2 = -2*(LL - null_LL)) %>%
+  select(subject, LL, null_LL, G2, fevals:convcode)
 
 twoLT_sum_GOF <- select(.data = twoLT_GOF,
-                        subject, LL, null_LL, calc_G2) %>%
-  summarise_at(.vars = c("LL", "null_LL", "calc_G2"),
+                        subject, LL, null_LL, G2) %>%
+  summarise_at(.vars = c("LL", "null_LL", "G2"),
                .funs = "sum")
 
 rm(twoLT_fits)
@@ -264,25 +290,26 @@ write.csv(twoLT_GOF,
 
 ```{r twoLT_plots, fig.width=10, fig.height=10, dependson="2LT_fit"}
 ggplot(ROC_point_predictions,
-       aes(x=FAR, y=HR,  shape=type, linetype=strength,
-           group=interaction(type, strength))
+       aes(x=FAR, y=HR,  shape=pOld, linetype=strength, color=type)
        ) +
-  geom_line(size=1) +
-  geom_point(aes(color=pOld), size=2, stroke=1.3) +
+  geom_line(aes(group=interaction(strength,type))) +
+  geom_point() +
   facet_wrap(~subject, labeller = label_both) +
-  scale_x_continuous("False Alarm Rate", limits = c(0,1),
-                     labels = c(0,0.25, 0.5, 0.75, 1)) +
+  scale_x_continuous("False Alarm Rate",
+                     limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)
+                     ) +
   scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_colour_brewer("Model",
+                      palette = "Set1",
+                      limits = c("obs", "twoLT"),
+                      labels = c("obs" = "Observed",
+                                 "twoLT" = "Two LT")
+                      ) +
   scale_linetype_discrete("Strength",
-                          labels=c("W" = "Weak",
-                                   "S" = "Strong")) +
-  scale_color_manual("p(Old)", values = c("#d82d2d", "#d8d834", "#17b50c")) +
-  scale_shape_manual("Type",
-                     values=c(16, 4),
-                     breaks = c("obs", "twoLT"),
-                     labels = c("Observed", "Two LT")) +
-  guides(colour = guide_legend(override.aes = list(size = 4)),
-         shape = guide_legend(override.aes = list(size = 4))) +
+                          limits = c("W", "S"),
+                          labels = c("W" = "Weak", "S" = "Strong")
+                          ) +
   ggtitle("Two LT Model ROC") +
   theme_bw(base_size = 16) +
   theme(plot.title = element_text(hjust=.5),
@@ -305,7 +332,7 @@ bind_rows(twoLT_params_scaled,
   kableExtra::kable_styling(full_width = FALSE, position = "float_left") %>%
   column_spec(1, bold = TRUE)
 
-bind_rows(select(.data = twoLT_GOF, subject, LL, null_LL, calc_G2),
+bind_rows(select(.data = twoLT_GOF, subject, LL, null_LL, G2),
           mutate(.data = twoLT_sum_GOF, subject = "Sum")
           ) %>%
   kable(type="HTML", digits=3,
@@ -332,4 +359,177 @@ cat("<ul><li>",
     "</li></ul>",
     sep=""
     )
+```
+
+# Aggregated Modeling
+
+```{r cell_counts_pooled}
+delayed_counts_by_bias <-
+  select(.data = delayed_counts_by_sub_bias, -subject) %>%
+  group_by(pOld) %>%
+  summarise_all(.funs = "sum")
+
+obs_ROC_data_pooled <-
+  mutate(delayed_counts_by_bias,
+         FAR = FA / L_N,
+         HR_W = H_W / W_N,
+         HR_S = H_S / S_N,
+         pOld = sprintf("%2.0f%%", pOld * 100)) %>%
+  select(pOld, FAR, HR_W, HR_S) %>%
+  gather(key="strength", value="HR", HR_W, HR_S) %>%
+  mutate(strength = sub("HR_", "", strength)) %>%
+  select(pOld, strength, FAR, HR)
+```
+
+
+```{r null_LL_pooled}
+null_LL_pooled <-
+  mutate(delayed_counts_by_bias,
+         FA_LL = dbinom(FA, L_N, FA / L_N, log = TRUE),
+         HW_LL = dbinom(H_W, W_N, H_W / W_N, log = TRUE),
+         HS_LL = dbinom(H_S, S_N, H_S / S_N, log = TRUE),
+         LL = FA_LL + HW_LL + HS_LL) %>%
+  select(pOld, LL) %>%
+  summarise(null_LL = sum(LL))
+```
+
+```{r fit_2LT_pooled, dependson=c("cell_counts_pooled", "2LT_LL")}
+
+twoLT_fit_pooled <- optimx(par = c("DO_L"=0.01, "FD_L"=0.01,
+                                   "DO_W" = 0.01, "FD_W" = 0.01,
+                                   "DO_S" = 0.01, "FD_S" = 0.01,
+                                   "GO_Cons" = 0.01, 'GO_Neut' = 0.01, 'GO_Lib' = 0.01
+                                   ),
+                           fn = twoLT_LL,
+                           method = c("nlminb"),
+                           itnmax = 3000,
+                           control = list(kkt = FALSE),
+                           counts = delayed_counts_by_bias)
+```
+
+
+```{r twoLT_pooled_parameters, dependson="fit_2LT_pooled"}
+
+parameter_names <- colnames(coef(twoLT_fit_pooled))
+
+twoLT_params_pooled <- select(.data = twoLT_fit_pooled, !!!parameter_names)
+
+twoLT_params_pooled_scaled <- select(.data = twoLT_fit_pooled, !!!parameter_names) %>%
+  rowwise() %>%
+  do({
+      data.frame(as.list(parameter_scaling(unlist(.[parameter_names]))),
+                 stringsAsFactors = FALSE
+                 )
+    }) %>%
+  ungroup()
+```
+
+
+```{r twoLT_pooled_GOF, dependson="fit_2LT_pooled"}
+twoLT_GOF_pooled <- select(twoLT_fit_pooled, LL = value, fevals, gevals, niter, convcode) %>%
+  mutate(LL = -LL,
+         null_LL = null_LL_pooled$null_LL,
+         G2 = -2*(LL - null_LL)
+         ) %>%
+  select(LL, null_LL, G2, fevals:convcode)
+
+twoLT_sum_GOF_pooled <- select(.data = twoLT_GOF_pooled,
+                        LL, null_LL, G2) %>%
+  summarise_at(.vars = c("LL", "null_LL", "G2"),
+               .funs = "sum")
+
+rm(twoLT_fit_pooled)
+```
+
+
+```{r twoLT_pooled_ROC, dependson="fit_2LT_pooled"}
+
+twoLT_one <- function(DO, FD, b) {
+  RO_params <- calculate_RO_parameters(c("b"=b))
+  DN <- 1-DO-FD
+  
+  p <- sum(c(DN, FD, DO)*unname(RO_params[c("RO_DN.b", "RO_FD.b", "RO_DO.b")]))
+  return(p)
+}
+
+twoLT_pooled_ROC_points <-
+  gather(twoLT_params_pooled_scaled, key="parameter", value="value") %>%
+  transmute(x = list(as.data.frame(
+      c(pOld = list(c("25%", "50%", "75%")),
+        twoLT(setNames(value, parameter))
+        ),
+      stringsAsFactors=FALSE
+    ))) %>% 
+  unnest() %>%
+  rename(S=HR_S, W=HR_W) %>%
+  gather(key = "strength", value="HR", S, W)
+
+twoLT_pooled_ROC_points <- bind_rows(obs = obs_ROC_data_pooled,
+                                     twoLT = twoLT_pooled_ROC_points,
+                                     .id = "type"
+                                     ) %>%
+  select(type, strength, pOld, FAR, HR) %>%
+  arrange(strength, pOld, type)
+
+
+twoLT_pooled_ROC_curve <-
+  select(.data = twoLT_params_pooled_scaled,
+         DO_L, FD_L, DN_L, DO_W, FD_W, DN_W, DO_S, FD_S, DN_S
+         ) %>%
+  mutate(b = list(seq(-1, 2, .01))) %>%
+  unnest(b) %>%
+  group_by(b)  %>%
+  summarise(x = list(data.frame(
+      FAR = twoLT_one(DO_L, FD_L, b),
+      HR_W = twoLT_one(DO_W, FD_W, b),
+      HR_S = twoLT_one(DO_S, FD_S, b)
+      ))
+    ) %>%
+  ungroup() %>%
+  unnest(x) %>%
+  rename(S=HR_S, W=HR_W) %>%
+  gather(key = "strength", value="HR", S, W) %>%
+  arrange(desc(b))  %>%
+  mutate(type="twoLT")
+```
+
+
+```{r  twoLT_pooled_ROC_plot, fig.width=7, fig.height=7, dependson="ROC_predictions"}
+
+ggplot(twoLT_pooled_ROC_points,
+       aes(x=FAR, y=HR, shape=pOld, color=type)
+       ) +
+  geom_point(size=4) +
+  geom_line(aes(linetype=strength, group=strength),
+            data = filter(twoLT_pooled_ROC_points, type=="obs"),
+            size=1.75
+            ) +
+  geom_line(aes(x=FAR, y=HR, color=type, linetype=strength),
+            data = twoLT_pooled_ROC_curve,
+            size=1.75,
+            inherit.aes = FALSE
+            ) +
+  scale_x_continuous("False Alarm Rate",
+                     limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)
+                     ) +
+  scale_y_continuous("Hit Rate", limits = c(0,1)) +
+  scale_colour_brewer("Model",
+                      palette = "Set1",
+                      limits = c("obs", "twoLT"),
+                      labels = c("obs" = "Observed",
+                                 "twoLT" = "Two LT")
+                      ) +
+  scale_linetype_discrete("Strength",
+                          limits = c("W", "S"),
+                          labels = c("W" = "Weak", "S" = "Strong")
+                          ) +
+  coord_fixed() +
+  ggtitle("Two-LT Model ROC (Pooled Data)") +
+  theme_bw(base_size = 16) +
+  theme(plot.title = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.size = unit(2, "lines"),
+        legend.position = c(.6, .2),
+        legend.box = "horizontal")
 ```
