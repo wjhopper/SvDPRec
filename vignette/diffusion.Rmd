@@ -572,16 +572,16 @@ ggplot(conditional_quantiles_pooled,
 
 
 ```{r param_tables_pooled, dependson=c("fit_pooled","tidy_parameters_pooled")}
-  kable(select(diffusion_fit_pooled, v.L, v.W, v.S, sv.L, sv.T, a, z, t0, st0),
-        digits = 3,
-        col.names = c("V<sub>L</sub>", "V<sub>W</sub>", "V<sub>S</sub>", "S<sub>vL</sub>",
-                      "S<sub>vT</sub>", "a", "z", "t<sub>0</sub>", "s<sub>t0</sub>"
-                      ),
-        row.names = FALSE,
-        escape = FALSE,
-        caption = "Pooled Parameters Values"
-        ) %>%
-    kableExtra::kable_styling(full_width = FALSE, position = "float_left")
+kable(select(diffusion_fit_pooled, v.L, v.W, v.S, sv.L, sv.T, a, z, t0, st0),
+      digits = 3,
+      col.names = c("V<sub>L</sub>", "V<sub>W</sub>", "V<sub>S</sub>", "S<sub>vL</sub>",
+                    "S<sub>vT</sub>", "a", "z", "t<sub>0</sub>", "s<sub>t0</sub>"
+                    ),
+      row.names = FALSE,
+      escape = FALSE,
+      caption = "Pooled Parameters Values"
+      ) %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "float_left")
 
 kable(select(.data = GOF_pooled, LL, null_LL, G2, df, p),
       type="HTML", digits=3,

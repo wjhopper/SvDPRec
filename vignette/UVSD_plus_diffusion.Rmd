@@ -344,7 +344,17 @@ GOF <- select(fits, subject, value:convcode) %>%
   rename(`-LL` = value) %>%
   mutate(deviance = 2*`-LL`)
 
+all_parameters <-  select(.data = fits, subject,
+                          d.W, d.S, s, c.C=crit1, c.N=crit2, c.L=crit3, 
+                          v.L, sv.L,v.W, v.S, sv.T, a:st0,
+                          )
+
 SDT_params <- select(fits, subject, d.W:crit3)
+
+SDT_params_avg <- mutate(.data = SDT_params, s = s^2) %>%
+  summarise_if(.predicate = is.numeric,
+               .funs = "mean") %>%
+  mutate(s = sqrt(s))
 
 diffusion_params <- select(fits, subject, v.L, sv.L,v.W, v.S, sv.T, a:st0) %>%
   mutate(sv.W = sv.T) %>%
@@ -353,6 +363,11 @@ diffusion_params <- select(fits, subject, v.L, sv.L,v.W, v.S, sv.T, a:st0) %>%
   separate(param, into=c("param", "strength")) %>%
   spread(param, value) %>%
   select(subject, strength, a:st0, v, sv)
+
+diffusion_params_avg <- select(fits, subject, v.L, sv.L,v.W, v.S, sv.T, a:st0) %>%
+  summarise_if(.predicate = is.numeric,
+               .funs = "mean"
+               )
 
 ```
 
@@ -405,7 +420,7 @@ ggplot(SDT_preds,
         legend.box = "horizontal")
 ```
 
-```{r SDT_avg_preds, fig.height=8, fig.width=8, cache=TRUE, dependson="fit"}
+```{r SDT_avg_preds, fig.height=6, fig.width=8, cache=TRUE, dependson="fit"}
 SDT_preds_avg <-
   summarise(.data = data.frame(t(colMeans(SDT_params[,2:7]))),
             SDT = list(data.frame(
@@ -514,6 +529,7 @@ avg_conditional_quantiles <- group_by(conditional_quantiles,
   select(-p)
 ```
 
+
 ```{r QP_plots, fig.width=10, fig.height=7}
 ggplot(avg_conditional_quantiles,
        aes(x=RT, y=quantile, color=speeded_correct, linetype=model, shape=model)) +
@@ -572,6 +588,40 @@ g2 <- left_join(select(GOF, subject, deviance),
 GOF <- left_join(select(GOF, -deviance),
                  select(g2, subject, G2, p),
                  by="subject")
+```
+
+
+```{r save_outputs, eval=isTRUE(getOption('knitr.in.progress'))}
+files_dir <- paste0(tools::file_path_sans_ext(knitr::current_input()),
+                    "_files"
+                    )
+if (!dir.exists(files_dir)) {
+  dir.create(files_dir)
+}
+
+write.csv(all_parameters,
+          file = file.path(files_dir, "parameters.csv"),
+          row.names = FALSE
+          )
+write.csv(GOF,
+          file = file.path(files_dir, "GOF.csv"),
+          row.names = FALSE
+          )
+```
+
+```{r download_links, results="asis"}
+cat("<ul><li>",
+    paste0('<a href="', file.path(files_dir, "parameters.csv"),
+           '">Download Raw Parameters</a>'
+           ),
+    "</li><li>",
+    paste0('<a href="',
+           file.path(files_dir, "GOF.csv"),
+           '">Download GOF Statistics</a>'
+       ),
+    "</li></ul>",
+    sep=""
+    )
 ```
 
 ```{r plots, results='asis', fig.height=6, fig.width=9, cache=TRUE, dependson="fit"}
@@ -645,7 +695,7 @@ for (s in unique(fits$subject)) {
 
 # Aggregated Modeling
 
-```{r pooled_data}
+```{r pooled_data, cache=TRUE}
 delayed_counts_by_bias <-
   select(.data = delayed_counts_by_sub_bias, -subject) %>%
   group_by(pOld) %>%
@@ -653,7 +703,7 @@ delayed_counts_by_bias <-
 
 obs_ROC_data_pooled <-
   mutate(delayed_counts_by_bias,
-         FAR = FA / L_N,
+         FAR = FA / FA_N,
          HR_W = H_W / W_N,
          HR_S = H_S / S_N,
          pOld = sprintf("%2.0f%%", pOld * 100)) %>%
@@ -679,50 +729,315 @@ pooled_acc <- filter(test, !is.na(type), speeded_RT > 200) %>%
 ```
 
 
-```{r fit_pooled}
-theta <- list(unlist(x[1,]), unlist(x[2,]),
-              c("a" = 1, "z" = .5, "t0" = .1, "st0" = .1, "v.L" = 0, "sv.L" = .5,
-                "d.W" = 1.5, "d.S" = 2.5, "s" = 1.2, crit = c(1.25, 1, .75))
-              )
+```{r fit_pooled, cache=TRUE, dependson=c("pooled_data")}
 
-fits <- list()
-  
-  for (i in 1:length(theta)) {
-    fit <- optimx(par = theta[[i]],
-                  fn = SDT_diffusion_LL_sum,
-                  method = c("nmkb", "nlminb"),
-                  itnmax = 3000,
-                  lower = c("a" = .01, "z" = 0.05, "t0" = .01, "st0" = .01,
-                            "v.L" = -5, "sv.L" = .1,
-                            "d.W" = 0, "d.S" = 0, "s" = 0.1,
-                            crit = c(-3, -3, -3)
-                            ),
-                  upper = c("a" = 3, "z" = .95, "t0" = .5, "st0" = .5,
-                            "v.L" = 5, "sv.L" = 4,
-                            "d.W" = 4, "d.S" = 4, "s" = 2,
-                            crit = c(3, 3, 3)
-                            ),
-                  control = list(kkt=FALSE, follow.on=FALSE),
-                  data = sub,
-                  theta_names = names(theta[[i]])
-                  )
-      fit$subject <- sub$speeded$subject[1]
-      fit <- tibble::rownames_to_column(fit, "method")
-      for (j in nrow(fit)) {
-        scaled <- SDT2diffusion(parameters = unlist(fit[j, c("d.W", "d.S", "s", "sv.L", "v.L")]))
-        fit[c("v.W","v.S","sv.T")] <- as.list(scaled[c("v.W","v.S","sv.T")])
-      }
-      sub_fits[[i]] <- fit
-  }
+theta <- c("a" = 1, "z" = .5, "t0" = .1, "st0" = .1, "v.L" = 0, "sv.L" = .5,
+           "d.W" = 1.5, "d.S" = 2.5, "s" = 1.2, crit = c(1.25, 1, .75)
+           )
 
-  sub_fits
+pooled_RT_choice_quantiles <-
+  mutate(pooled_RT_choice_quantiles,
+         boundary = as.numeric(factor(speeded_judgment,
+                                      levels = c('n','o'),
+                                      labels = c("lower",'upper')
+                                      )
+                               )
+         )
 
-}
+fits_pooled <- optimx(par = theta,
+                      fn = SDT_diffusion_LL_sum,
+                      method = c("nmkb", "nlminb"),
+                      itnmax = c(1000, 3000),
+                      lower = c("a" = .01, "z" = 0.05, "t0" = .01, "st0" = .01,
+                                "v.L" = -5, "sv.L" = .1,
+                                "d.W" = 0, "d.S" = 0, "s" = 0.1,
+                                crit = c(-3, -3, -3)
+                                ),
+                      upper = c("a" = 3, "z" = .95, "t0" = .5, "st0" = .5,
+                                "v.L" = 5, "sv.L" = 4,
+                                "d.W" = 4, "d.S" = 4, "s" = 2,
+                                crit = c(3, 3, 3)
+                                ),
+                      control = list(kkt=FALSE, follow.on=TRUE),
+                      data = list("speeded" = pooled_RT_choice_quantiles,
+                                  "biased" = delayed_counts_by_bias
+                                  ),
+                      theta_names = names(theta)
+                      )
 
-fits <- lapply(fits, bind_rows) %>%
-  bind_rows() %>%
-  group_by(subject) %>%
-  filter(value == min(value)) %>%
+fits_pooled <- fits_pooled[2, ]
+scaled <- SDT2diffusion(parameters = unlist(fits_pooled[c("d.W", "d.S", "s", "sv.L", "v.L")]))
+fits_pooled[c("v.W","v.S","sv.T")] <- as.list(scaled[c("v.W","v.S","sv.T")])
+
+pooled_RT_choice_quantiles$boundary <- NULL
+```
+
+```{r parameters_pooled, cache=TRUE, dependson="fit_pooled"}
+
+SDT_params_pooled <- select(fits_pooled, d.W:crit3) %>%
+  rename(c.C = crit1, c.N = crit2, c.L = crit3)
+
+diffusion_params_pooled <- select(fits_pooled, v.L, sv.L,v.W, v.S, sv.T, a:st0) %>%
+  mutate(sv.W = sv.T) %>%
+  rename(sv.S = sv.T) %>%
+  gather(key='param', value='value', v.L, v.W, v.S, sv.L, sv.W, sv.S) %>%
+  separate(param, into=c("param", "strength")) %>%
+  spread(param, value) %>%
+  select(strength, a:st0, v, sv)
+
+```
+
+
+```{r diffusion_predictions_pooled, cache=TRUE, dependson=c("fit_pooled", "parameters_pooled")}
+
+diffusion_acc_preds_pooled <- rowwise(diffusion_params_pooled) %>%
+  mutate(p_resp_old = pdiffusion(Inf, response = 2,
+                                 a=a, v=v, t0=t0, z=z*a, sv=sv, st0=st0
+                                 ),
+         acc = replace(p_resp_old, strength == "L", 1 - p_resp_old[strength == "L"])
+         ) %>%
+  select(-p_resp_old) %>%
   ungroup()
+
+accuracy_pooled <- bind_rows(predicted = select(mutate(diffusion_acc_preds_pooled, model="diffusion"),
+                                         model, strength, acc),
+                      observed = mutate(pooled_acc, model = 'observed')
+                      )
+
+diffusion_RT_quantiles_pooled <- rowwise(diffusion_params_pooled) %>%
+  mutate(RT = list(as.data.frame(matrix(
+                qdiffusion(p = rep(c(.1, .3, .5, .7, .9), 2),
+                           response = rep(1:2, each = 5),
+                           a = a, z = z*a, t0 = t0, st0 = st0,
+                           v = v, sv = sv,
+                           scale_p = TRUE),
+                nrow=2, ncol=5,
+                byrow=TRUE,
+                dimnames = list(c("Incorrect","Correct"),
+                                quantile = c("10%","30%", "50%", "70%", "90%"))
+                )))
+         ) %>%
+  unnest() %>% 
+  mutate(speeded_judgment = rep(c('n', 'o'), nrow(.)/2)) %>%
+  select(strength, speeded_judgment, `10%`, `30%`, `50%`, `70%`, `90%`) %>%
+  gather('quantile', 'value', `10%`, `30%`, `50%`, `70%`, `90%`)
+
+RT_quantiles_pooled <- bind_rows(predicted = mutate(diffusion_RT_quantiles_pooled, model="diffusion"),
+                          observed = filter(pooled_RT_choice_quantiles, quantile != "100%") %>%
+                                       select(-bin_counts) %>%
+                                       mutate(model = 'observed')
+                          ) %>%
+  mutate(speeded_correct = ifelse((strength == "L" & speeded_judgment == "n") |
+                                    strength %in% c("S", "W") & speeded_judgment == "o",
+                                  TRUE,
+                                  FALSE)
+         )
+
+conditional_quantiles_pooled <- left_join(RT_quantiles_pooled,
+                                          mutate(accuracy_pooled, inc = 1-acc) %>%
+                                            gather("acc", "p", acc, inc) %>%
+                                            mutate(speeded_correct = ifelse(acc=="acc",TRUE, FALSE)) %>%
+                                            select(model, strength, speeded_correct, p),
+                                          by=c("model", "strength", "speeded_correct")) %>%
+  select(-speeded_judgment) %>%
+  rename(RT = value) %>%
+  mutate(strength = factor(strength, levels=c("L","W","S")),
+         quantile = p * as.numeric(sub("%", "", quantile, fixed = TRUE))/100)
+
+```
+
+
+```{r SDT_preds_pooled, cache=TRUE, fig.height=8, fig.width=8, dependson="parameters_pooled"}
+SDT_pooled_ROC_curve <-
+  summarise(.data = SDT_params_pooled,
+            SDT = list(data.frame(
+                FAR = rep(FAR_points, 2),
+                HR = pnorm(c((qnorm(FAR_points) + d.W)/s,
+                             (qnorm(FAR_points) + d.S)/s
+                           )),
+                strength = factor(rep(c("W", "S"), each = length(FAR_points)),
+                                levels=c("W","S")
+                                )
+                ))
+            ) %>%
+  unnest() %>%
+  mutate(model="UVSD")
+
+SDT_pooled_ROC_points <-
+  transmute(SDT_params_pooled,
+            SDT  = list(
+              as.data.frame(c(SDT(d=c(d.W, d.S), s=s, crit=c(c.C, c.N, c.L)),
+                              pOld = list(c("25%","50%","75%"))
+                              ),
+                            stringsAsFactors=FALSE
+                            )
+              )) %>%
+  unnest() %>%
+  rename(S=HitRate_Strong, W=HitRate_Weak, FAR=FalseAlarmRate) %>%
+  gather(key = "strength", value="HR", S, W) %>%
+  select(pOld, strength, FAR, HR) %>%
+  bind_rows("UVSD" = .,
+            "obs" = obs_ROC_data_pooled,
+            .id="model"
+            )
+```
+
+
+```{r GOF_pooled, cache=TRUE, dependson="fit_pooled"}
+speeded_RT_LL_pooled <- pooled_RT_choice_quantiles %>%
+  group_by(strength) %>%
+  mutate(observed_p = bin_counts/sum(bin_counts)) %>%
+  summarise(LL = dmultinom(bin_counts, sum(bin_counts), observed_p, log=TRUE)) %>%
+  summarise(null_LL = sum(LL))
+
+delayed_acc_LL_pooled <- mutate(delayed_counts_by_bias,
+                                FA_LL = dbinom(FA, FA_N, FA / FA_N, log = TRUE),
+                                HW_LL = dbinom(H_W, W_N, H_W / W_N, log = TRUE),
+                                HS_LL = dbinom(H_S, S_N, H_S / S_N, log = TRUE),
+                                LL = FA_LL + HW_LL + HS_LL
+                                ) %>% 
+  select(pOld, LL) %>%
+  summarise(null_LL = sum(LL))
+
+GOF_pooled <- select(fits_pooled, value:convcode) %>%
+  mutate(LL = -value,
+         null_LL = speeded_RT_LL_pooled$null_LL + delayed_acc_LL_pooled$null_LL,
+         G2 = -2*(LL - null_LL),
+         df = 42 - 12,
+         p = pchisq(G2, df = df, lower.tail = FALSE)
+         ) %>%
+  dplyr::select(LL, null_LL, G2, df, p, fevals, gevals, niter, convcode)
+```
+
+
+```{r ROC_plot_pooled, cache=TRUE, fig.height=7, fig.width=8, dependson="SDT_preds_pooled"}
+
+ggplot(SDT_pooled_ROC_points,
+       aes(x=FAR, y=HR, shape=pOld, color=model)
+       ) +
+  geom_line(aes(linetype=strength, group=strength),
+            data = filter(SDT_pooled_ROC_points, model=="obs"),
+            size=1.75
+            ) +
+  geom_line(aes(x=FAR, y=HR, color=model, linetype=strength),
+            data = SDT_pooled_ROC_curve,
+            size=1.75,
+            inherit.aes = FALSE
+            ) +
+  geom_point(size=4) +
+  scale_x_continuous("False Alarm Rate",
+                     limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)
+                     ) +
+  scale_y_continuous("Hit Rate",
+                     limits = c(0,1),
+                     labels = c(0,0.25, 0.5, 0.75, 1)
+                     ) +
+  scale_colour_brewer("Model",
+                      palette = "Set1",
+                      limits = c("obs", "UVSD"),
+                      labels = c("obs" = "Observed",
+                                 "UVSD" = "UVSD")
+                      ) +
+  scale_linetype_discrete("Strength",
+                          limits = c("W", "S"),
+                          labels = c("W" = "Weak", "S" = "Strong")
+                          ) +
+  coord_fixed() +
+  ggtitle("UVSD Model ROC (Pooled Data)") +
+  theme_bw(base_size = 16) +
+  theme(plot.title = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.size = unit(2, "lines"),
+        legend.position = c(.6, .2),
+        legend.box = "horizontal")
+```
+
+
+```{r QP_plot_pooled, cache=TRUE, fig.width=10, fig.height=7, dependson=c("diffusion_predictions_pooled")}
+
+ggplot(conditional_quantiles_pooled,
+       aes(x=RT, y=quantile, color=speeded_correct, linetype=model, shape=model)) +
+  geom_point(size=2) +
+  geom_line(size=1) +
+  facet_grid(~strength,
+             labeller = as_labeller(c("L" = "Lure", "W" = "Weak", "S" = "Strong"))
+             ) +
+  scale_color_manual("Accuracy",
+                     values = RColorBrewer::brewer.pal(3, 'Set1')[1:2],
+                     limits=c("FALSE","TRUE"),
+                     labels=c("Incorrect", "Correct")) +
+  scale_linetype_discrete(NULL,
+                        limits = c("diffusion", "observed"),
+                        labels = c("diffusion" = "Diffusion",
+                                   "observed" = "Observed")
+                        ) +
+  scale_shape_discrete(NULL,
+                     limits = c("diffusion", "observed"),
+                     labels = c("diffusion" = "Diffusion",
+                                "observed" = "Observed")
+                     ) +
+  guides(color = guide_legend(order = 1)) +
+  ggtitle("Diffusion Model Conditional Quantiles (Pooled)") +
+  scale_x_continuous("Response Time (s.)") +
+  theme_bw(base_size=16) +
+  theme(plot.title = element_text(hjust=.5),
+        plot.subtitle = element_text(hjust=.5),
+        strip.background = element_blank(),
+        legend.key.width = unit(2,"line")
+        )
+```
+
+```{r param_tables_pooled, cache=TRUE, dependson=c("fit_pooled","parameters_pooled", "GOF_pooled")}
+kable(select(fits_pooled, v.L, v.W, v.S, sv.L, sv.T, a, z, t0, st0),
+      digits = 3,
+      col.names = c("V<sub>L</sub>", "V<sub>W</sub>", "V<sub>S</sub>", "S<sub>vL</sub>",
+                    "S<sub>vT</sub>", "a", "z", "t<sub>0</sub>", "s<sub>t0</sub>"
+                    ),
+      row.names = FALSE,
+      escape = FALSE,
+      caption = "Pooled Diffusion Parameters Values"
+      ) %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "float_left")
+
+kable(SDT_params_pooled, digits=3, type="HTML", escape = FALSE,
+      caption = "Pooled parameter estimates",
+      row.names = FALSE,
+      col.names = c("d'<sub>W</sub>", "d'<sub>S</sub>", "\u03c3",
+                    "C<sub>c</sub>", "C<sub>n</sub>", "C<sub>l</sub>")
+      ) %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "float_left")
+
+
+kable(select(.data = GOF_pooled, LL, null_LL, G2, df, p),
+      type="HTML", digits=3,
+      caption = "Pooled Goodness of Fit",
+      col.names = c("LL", "Null LL", "G<sup>2</sup>", "df.", "<i>p</i>"),
+      escape = FALSE) %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "left")
+```
+
+```{r avg_vs_pooled_params, cache=TRUE}
+bind_rows("avg" = diffusion_params_avg,
+          "pooled" = select(fits_pooled, v.L, v.W, v.S, sv.L, sv.T, a, z, t0, st0),
+          .id = "model"
+          ) %>%
+  gather(key="param", value="value", -model) %>%
+  ggplot(aes(x=param, y=value, color=model)) +
+  geom_point(aes(group=model),
+             position = position_dodge(width=.25)
+             ) +
+  ggtitle("Diffusion Parameters")
+
+bind_rows("avg" = rename(.data = SDT_params_avg, c.C = crit1, c.N = crit2, c.L = crit3),
+          "pooled" = SDT_params_pooled,
+          .id = "model"
+          ) %>%
+  gather(key="param", value="value", -model) %>%
+  ggplot(aes(x=param, y=value, color=model)) +
+  geom_point(aes(group=model),
+             position = position_dodge(width=.25)
+             ) +
+  ggtitle("UVSD Parameters")
 ```
 
